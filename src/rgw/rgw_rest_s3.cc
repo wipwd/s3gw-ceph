@@ -6152,6 +6152,11 @@ int RGWSelectObj_ObjStore_S3::run_s3select(const char* query, const char* input,
 
   if (m_result.size() > strlen(PAYLOAD_LINE)) {
     m_result.append(END_PAYLOAD_LINE);
+    // create_message actully uses 16 bytes for encoding(4) ,which is 4 bytes more than actual size of string; string-capacity is much bigger than string-size(doubled) for most cases
+    // but in some cases it might be the same(size == capacity).
+    if(m_result.capacity() - m_result.size()<4){
+      m_result.reserve(m_result.size()+4);
+    }
     int buff_len = create_message(m_result.data(), m_result.size() - 12, header_size);
     s->formatter->write_bin_data(m_result.data(), buff_len);
     if (op_ret < 0) {
