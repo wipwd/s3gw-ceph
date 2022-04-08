@@ -1,0 +1,3 @@
+add_executable(unittest_rgw_dbstore_mgr test_rgw_dbstore_mgr.cc)
+add_ceph_unittest(unittest_rgw_dbstore_mgr)
+target_link_libraries(unittest_rgw_dbstore_mgr ${rgw_libs})

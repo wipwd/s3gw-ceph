@@ -4,16 +4,9 @@
 #pragma once
 
 #include <map>
-#include <cerrno>
-#include <cstdlib>
 #include <string>
-#include <cstdio>
-#include <iostream>
-#include <vector>
 
-#include "common/ceph_context.h"
 #include "common/dbstore.h"
-#include "sqlite/sqliteDB.h"
 
 using namespace rgw::store;
 using DB = rgw::store::DB;
@@ -23,33 +16,29 @@ const static std::string default_tenant = "default_ns";
 
 class DBStoreManager {
 private:
-  std::map<std::string, DB*> DBStoreHandles;
-  DB *default_db = NULL;
-  CephContext *cct;
+  std::map<std::string, DB*> db_store_handles_;
+  CephContext *cct_ = nullptr;
+  DB *default_db_ = nullptr;
 
 public:
-  DBStoreManager(CephContext *_cct): DBStoreHandles() {
-    cct = _cct;
-	default_db = createDB(default_tenant);
-  };
-  DBStoreManager(CephContext *_cct, std::string logfile, int loglevel): DBStoreHandles() {
-    /* No ceph context. Create one with log args provided */
-    cct = _cct;
-    cct->_log->set_log_file(logfile);
-    cct->_log->reopen_log_file();
-    cct->_conf->subsys.set_log_level(ceph_subsys_rgw, loglevel);
-  };
-  ~DBStoreManager() { destroyAllHandles(); };
+  DBStoreManager(CephContext *cct);
+  DBStoreManager(CephContext *cct, std::string logfile, int loglevel);
+  ~DBStoreManager();
 
   /* XXX: TBD based on testing
    * 1)  Lock to protect DBStoreHandles map.
    * 2) Refcount of each DBStore to protect from
    * being deleted while using it.
    */
-  DB* getDB () { return default_db; };
+  DB* getDB () { return default_db_; };
   DB* getDB (std::string tenant, bool create);
+  DB* createDB();
   DB* createDB (std::string tenant);
   void deleteDB (std::string tenant);
   void deleteDB (DB* db);
   void destroyAllHandles();
+
+private:
+  std::string getDBFullPath() const;
+  std::string getDBBasePath() const;
 };
