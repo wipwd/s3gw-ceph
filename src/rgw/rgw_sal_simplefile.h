@@ -680,6 +680,9 @@ class SimpleFileStore : public Store {
   virtual bool valid_placement(const rgw_placement_rule& rule) override {
     return zone.get_params().valid_placement(rule);
   }
+
+  // TODO make proper bucket path
+  std::filesystem::path buckets_path() const { return data_path; };
 };
 
 }  // namespace rgw::sal
