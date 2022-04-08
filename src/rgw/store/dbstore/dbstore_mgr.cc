@@ -1,10 +1,30 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 // vim: ts=8 sw=2 smarttab
 
+#include <filesystem>
+
 #include "dbstore_mgr.h"
 #include "common/dbstore_log.h"
+#include "sqlite/sqliteDB.h"
 
 using namespace std;
+DBStoreManager::DBStoreManager(CephContext *cct)
+  : cct_(cct)
+  , default_db_(createDB()) {
+}
+
+DBStoreManager::DBStoreManager(CephContext *cct, std::string logfile, int loglevel)
+  : cct_(cct) 
+  , default_db_(createDB()) {
+  /* No ceph context. Create one with log args provided */
+  cct_->_log->set_log_file(logfile);
+  cct_->_log->reopen_log_file();
+  cct_->_conf->subsys.set_log_level(ceph_subsys_rgw, loglevel);
+}
+
+DBStoreManager::~DBStoreManager() { 
+  destroyAllHandles(); 
+}
 
 /* Given a tenant, find and return the DBStore handle.
  * If not found and 'create' set to true, create one
@@ -12,40 +32,33 @@ using namespace std;
  */
 DB *DBStoreManager::getDB (string tenant, bool create)
 {
-  map<string, DB*>::iterator iter;
-  DB *dbs = nullptr;
-  pair<map<string, DB*>::iterator,bool> ret;
-
   if (tenant.empty())
-    return default_db;
+    return default_db_;
 
-  if (DBStoreHandles.empty())
-    goto not_found;
+  auto iter = db_store_handles_.find(tenant);
+  if (iter == db_store_handles_.end()) {
+    if (!create) {
+      return nullptr;
+    }
+    return createDB(tenant);
+  }
+  return iter->second;
+}
 
-  iter = DBStoreHandles.find(tenant);
-
-  if (iter != DBStoreHandles.end())
-    return iter->second;
-
-not_found:
-  if (!create)
-    return NULL;
-
-  dbs = createDB(tenant);
-
-  return dbs;
+DB* DBStoreManager::createDB() {
+  const auto& db_path = getDBFullPath();
+  ldout(cct_, 0) << "Creating DB with full path: (" << db_path <<")" << dendl;
+  return createDB(db_path);
 }
 
 /* Create DBStore instance */
 DB *DBStoreManager::createDB(string tenant) {
   DB *dbs = nullptr;
-  pair<map<string, DB*>::iterator,bool> ret;
-
   /* Create the handle */
 #ifdef SQLITE_ENABLED
-  dbs = new SQLiteDB(tenant, cct);
+  dbs = new SQLiteDB(tenant, cct_);
 #else
-  dbs = new DB(tenant, cct);
+  dbs = new DB(tenant, cct_);
 #endif
 
   /* API is DB::Initialize(string logfile, int loglevel);
@@ -54,15 +67,15 @@ DB *DBStoreManager::createDB(string tenant) {
    * XXX: need to align these logs to ceph location
    */
   if (dbs->Initialize("", -1) < 0) {
-    ldout(cct, 0) << "DB initialization failed for tenant("<<tenant<<")" << dendl;
+    ldout(cct_, 0) << "DB initialization failed for tenant("<<tenant<<")" << dendl;
 
     delete dbs;
-    return NULL;
+    return nullptr;
   }
 
   /* XXX: Do we need lock to protect this map?
   */
-  ret = DBStoreHandles.insert(pair<string, DB*>(tenant, dbs));
+  auto ret = db_store_handles_.insert(pair<string, DB*>(tenant, dbs));
 
   /*
    * Its safe to check for already existing entry (just
@@ -79,52 +92,47 @@ DB *DBStoreManager::createDB(string tenant) {
 }
 
 void DBStoreManager::deleteDB(string tenant) {
-  map<string, DB*>::iterator iter;
-  DB *dbs = nullptr;
-
-  if (tenant.empty() || DBStoreHandles.empty())
+  if (tenant.empty() || db_store_handles_.empty())
     return;
 
   /* XXX: Check if we need to perform this operation under a lock */
-  iter = DBStoreHandles.find(tenant);
+  auto iter = db_store_handles_.find(tenant);
 
-  if (iter == DBStoreHandles.end())
+  if (iter == db_store_handles_.end())
     return;
 
-  dbs = iter->second;
+  DB *dbs = iter->second;
 
-  DBStoreHandles.erase(iter);
+  db_store_handles_.erase(iter);
   dbs->Destroy(dbs->get_def_dpp());
   delete dbs;
-
-  return;
 }
 
 void DBStoreManager::deleteDB(DB *dbs) {
   if (!dbs)
     return;
 
-  (void)deleteDB(dbs->getDBname());
+  deleteDB(dbs->getDBname());
 }
 
 
 void DBStoreManager::destroyAllHandles(){
-  map<string, DB*>::iterator iter;
-  DB *dbs = nullptr;
-
-  if (DBStoreHandles.empty())
+  if (db_store_handles_.empty())
     return;
 
-  for (iter = DBStoreHandles.begin(); iter != DBStoreHandles.end();
-      ++iter) {
-    dbs = iter->second;
+  for (auto& [key, dbs]: db_store_handles_) {
     dbs->Destroy(dbs->get_def_dpp());
     delete dbs;
   }
-
-  DBStoreHandles.clear();
-
-  return;
+  db_store_handles_.clear();
 }
 
+std::string DBStoreManager::getDBFullPath() const {
+  auto rgw_data = cct_->_conf.get_val<std::string>("rgw_data");
+  auto db_path = std::filesystem::path(rgw_data) / default_tenant;
+  return db_path.string();
+}
 
+std::string DBStoreManager::getDBBasePath() const {
+  return cct_->_conf.get_val<std::string>("rgw_data");
+}
