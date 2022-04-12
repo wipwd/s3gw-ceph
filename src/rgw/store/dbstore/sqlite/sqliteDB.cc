@@ -2322,6 +2322,13 @@ int SQLListBucketObjects::Bind(const DoutPrefixProvider *dpp, struct DBOpParams 
   SQL_BIND_INDEX(dpp, stmt, index, p_params.op.bucket.bucket_name, sdb);
   SQL_BIND_TEXT(dpp, stmt, index, params->op.bucket.info.bucket.name.c_str(), sdb);
 
+  SQL_BIND_INDEX(dpp, stmt, index, p_params.op.obj.prefix, sdb);
+  {
+    std::ostringstream os;
+    os << params->op.obj.prefix << ((params->op.obj.prefix != "") ? "/%" : "%");
+    SQL_BIND_TEXT(dpp, stmt, index, os.str().c_str(), sdb);
+  }
+
   SQL_BIND_INDEX(dpp, stmt, index, p_params.op.obj.min_marker, sdb);
   SQL_BIND_TEXT(dpp, stmt, index, params->op.obj.min_marker.c_str(), sdb);
 
