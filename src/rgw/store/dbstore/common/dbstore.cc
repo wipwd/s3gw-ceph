@@ -738,6 +738,7 @@ int DB::Bucket::List::list_objects(const DoutPrefixProvider *dpp, int64_t max,
   db_params.op.obj.min_marker = params.marker.name;
   db_params.op.obj.max_marker = params.end_marker.name;
   db_params.op.list_max_count = max + 1; /* +1 for next_marker */
+  db_params.op.obj.prefix = params.prefix;
 
   ret = store->ProcessOp(dpp, "ListBucketObjects", &db_params);
 
