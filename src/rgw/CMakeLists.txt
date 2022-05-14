@@ -205,7 +205,15 @@ if(WITH_RADOSGW_DBSTORE)
   list(APPEND librgw_common_srcs rgw_sal_dbstore.cc)
 endif()
 if(WITH_RADOSGW_SIMPLEFILE)
-  list(APPEND librgw_common_srcs rgw_sal_simplefile.cc)
+  list(APPEND librgw_common_srcs
+    rgw_sal_simplefile.cc
+    driver/simplefile/bucket.cc
+    driver/simplefile/object.cc
+    driver/simplefile/user.cc
+    driver/simplefile/zone.cc
+    driver/simplefile/sfs_bucket.cc
+    driver/simplefile/sfs_paths.cc
+    driver/simplefile/sfs_user.cc)
 endif()
 if(WITH_RADOSGW_MOTR)
   list(APPEND librgw_common_srcs rgw_sal_motr.cc)
