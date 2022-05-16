@@ -72,6 +72,8 @@ class SimpleFileStore : public Store {
   ~SimpleFileStore() {}
   virtual void finalize(void) override;
 
+  void maybe_init_store();
+
   virtual const char *get_name() const override { return "simplefile"; }
   virtual std::string get_cluster_id(const DoutPrefixProvider *dpp,
                                      optional_yield y) override {
@@ -234,6 +236,7 @@ class SimpleFileStore : public Store {
       const rgw_placement_rule *ptail_placement_rule, uint64_t olh_epoch,
       const std::string &unique_tag) override;
 
+  std::filesystem::path meta_path() const;
   std::filesystem::path buckets_path() const;
   std::filesystem::path users_path() const;
   std::filesystem::path bucket_path(const rgw_bucket &bucket) const;
