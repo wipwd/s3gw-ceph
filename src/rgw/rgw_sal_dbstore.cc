@@ -1857,7 +1857,8 @@ namespace rgw::sal {
 
   int DBStore::meta_list_keys_next(const DoutPrefixProvider *dpp, void* handle, int max, list<string>& keys, bool* truncated)
   {
-    return 0;
+    *truncated = false;
+    return getDB()->list_users(dpp, keys);
   }
 
   void DBStore::meta_list_keys_complete(void* handle)
