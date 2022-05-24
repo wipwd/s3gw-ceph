@@ -25,6 +25,12 @@ class SimpleFileAtomicWriter : public Writer {
 
  protected:
   rgw::sal::SimpleFileStore *store;
+  SimpleFileObject obj;
+  const rgw_user &owner;
+  const rgw_placement_rule *placement_rule;
+  uint64_t olh_epoch;
+  const std::string &unique_tag;
+  uint64_t bytes_written;
 
  public:
   SimpleFileAtomicWriter(
@@ -55,6 +61,8 @@ class SimpleFileAtomicWriter : public Writer {
     bool *canceled,
     optional_yield y
   ) override;
+
+  const std::string get_cls_name() const { return "atomic_writer"; }
 
 };
 
