@@ -63,6 +63,9 @@ class SimpleFileObject : public Object {
   };
   SimpleFileObject::Meta meta;
 
+  /**
+   * reads an object's contents.
+   */
   struct SimpleFileReadOp : public ReadOp {
    private:
     SimpleFileObject *source;
@@ -79,7 +82,13 @@ class SimpleFileObject : public Object {
                         RGWGetDataCB *cb, optional_yield y) override;
     virtual int get_attr(const DoutPrefixProvider *dpp, const char *name,
                          bufferlist &dest, optional_yield y) override;
+
+    const std::string get_cls_name() { return "object_read"; }
   };
+
+  /**
+   * deletes an object.
+   */
   struct SimpleFileDeleteOp : public DeleteOp {
    private:
     SimpleFileObject *source;
@@ -93,9 +102,11 @@ class SimpleFileObject : public Object {
 
   SimpleFileObject(SimpleFileStore *_st, const rgw_obj_key &_k)
       : Object(_k), store(_st) {}
-  SimpleFileObject(SimpleFileStore *_st, const rgw_obj_key &_k, Bucket *_b)
-      : Object(_k, _b), store(_st) {
-
+  SimpleFileObject(
+    SimpleFileStore *_st,
+    const rgw_obj_key &_k,
+    Bucket *_b
+  ) : Object(_k, _b), store(_st) {
     init();
   }
 
@@ -166,12 +177,20 @@ class SimpleFileObject : public Object {
                                        const DoutPrefixProvider *dpp) override;
   virtual int swift_versioning_copy(const DoutPrefixProvider *dpp,
                                     optional_yield y) override;
+  
+  /**
+   * Obtain a Read Operation.
+   */
   virtual std::unique_ptr<ReadOp> get_read_op() override {
     return std::make_unique<SimpleFileObject::SimpleFileReadOp>(this, nullptr);
   }
+  /**
+   * Obtain a Delete Operation.
+   */
   virtual std::unique_ptr<DeleteOp> get_delete_op() override {
     return std::make_unique<SimpleFileObject::SimpleFileDeleteOp>(this);
   }
+
   virtual int omap_get_vals(const DoutPrefixProvider *dpp,
                             const std::string &marker, uint64_t count,
                             std::map<std::string, bufferlist> *m, bool *pmore,
@@ -196,8 +215,12 @@ class SimpleFileObject : public Object {
     return 0;
   }
 
+  const std::string get_cls_name() { return "object"; }
   void write_meta();
   void load_meta();
+  void refresh_meta() {
+    load_meta();
+  }
 };
 
 } // ns rgw::sal
