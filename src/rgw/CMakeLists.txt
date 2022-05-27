@@ -214,7 +214,6 @@ if(WITH_RADOSGW_SIMPLEFILE)
     driver/simplefile/zone.cc
     driver/simplefile/writer.cc
     driver/simplefile/sfs_bucket.cc
-    driver/simplefile/sfs_paths.cc
     driver/simplefile/sfs_user.cc)
 endif()
 if(WITH_RADOSGW_MOTR)
