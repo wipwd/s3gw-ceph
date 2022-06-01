@@ -296,6 +296,11 @@ class SimpleFileStore : public Store {
     const std::string &unique_tag
   ) override;
 
+  bool object_written(
+    const DoutPrefixProvider *dpp,
+    SimpleFileObject *obj
+  );
+
   virtual const std::string& get_compression_type(
     const rgw_placement_rule& rule
   ) override {
@@ -365,7 +370,7 @@ class SimpleFileStore : public Store {
     const rgw_bucket &bucket,
     const rgw_obj_key &obj
   ) const {
-    return object_path(bucket, obj.name);
+    return object_path(bucket, hash_rgw_obj_key(obj.name));
   }
 
   /**
@@ -375,7 +380,7 @@ class SimpleFileStore : public Store {
       const rgw_bucket &bucket,
       const rgw_obj_key &obj
   ) const {
-    const std::string metafn = "_meta." + obj.name;
+    const std::string metafn = "_meta." + hash_rgw_obj_key(obj.name);
     return object_path(bucket, metafn);
   }
 
