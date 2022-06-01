@@ -146,6 +146,10 @@ rgw::sal::Store* StoreManager::init_storage_provider(const DoutPrefixProvider* d
       "h7GhxuBLTrlhVUyxSPUKUV8r/2EI4ngqJxD7iBdBYLhwluN30JaT3Q==");
     const char *caps = get_env_char(
       "RGW_DEFAULT_USER_CAPS");
+    const int system = get_env_int(
+      "RGW_DEFAULT_USER_SYSTEM"); // Defaults to 0.
+    const char *assumed_role_arn = get_env_char(
+      "RGW_DEFAULT_USER_ASSUMED_ROLE_ARN");
 
     /* XXX: temporary - create testid user */
     rgw_user testid_user("", id, "");
@@ -155,6 +159,10 @@ rgw::sal::Store* StoreManager::init_storage_provider(const DoutPrefixProvider* d
     RGWAccessKey k1(access_key, secret_key);
     user->get_info().access_keys[access_key] = k1;
     user->get_info().max_buckets = RGW_DEFAULT_MAX_BUCKETS;
+    user->get_info().system = system;
+    if (assumed_role_arn != nullptr) {
+        user->get_info().assumed_role_arn = assumed_role_arn;
+    }
     if (caps != nullptr) {
         RGWUserCaps rgw_caps;
         rgw_caps.add_from_string(caps);
