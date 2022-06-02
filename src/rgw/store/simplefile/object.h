@@ -92,9 +92,10 @@ class SimpleFileObject : public Object {
   struct SimpleFileDeleteOp : public DeleteOp {
    private:
     SimpleFileObject *source;
+    BucketMgrRef mgr;
 
    public:
-    SimpleFileDeleteOp(SimpleFileObject *_source);
+    SimpleFileDeleteOp(SimpleFileObject *_source, BucketMgrRef _mgr);
     virtual int delete_obj(const DoutPrefixProvider *dpp,
                            optional_yield y) override;
 
@@ -193,9 +194,7 @@ class SimpleFileObject : public Object {
   /**
    * Obtain a Delete Operation.
    */
-  virtual std::unique_ptr<DeleteOp> get_delete_op() override {
-    return std::make_unique<SimpleFileObject::SimpleFileDeleteOp>(this);
-  }
+  virtual std::unique_ptr<DeleteOp> get_delete_op() override;
 
   virtual int omap_get_vals(const DoutPrefixProvider *dpp,
                             const std::string &marker, uint64_t count,
