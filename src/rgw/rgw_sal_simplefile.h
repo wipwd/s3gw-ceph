@@ -69,7 +69,6 @@ class UnsupportedLuaScriptManager : public LuaScriptManager {
 
 class SimpleFileStore : public Store {
  private:
-  RGWUserInfo dummy_user;
   RGWSyncModuleInstanceRef sync_module;
   SimpleFileZone zone;
   const std::filesystem::path data_path;
