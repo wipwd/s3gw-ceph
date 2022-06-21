@@ -230,3 +230,4 @@ add_ceph_unittest(unittest_rgw_lua)
 target_link_libraries(unittest_rgw_lua ${rgw_libs})
 
 add_subdirectory(dbstore)
+add_subdirectory(simplefile)
