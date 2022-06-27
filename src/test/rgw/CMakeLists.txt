@@ -271,4 +271,4 @@ target_include_directories(unittest_rgw_lua
   SYSTEM PRIVATE "${CMAKE_SOURCE_DIR}/src/rgw/store/rados")
 target_link_libraries(unittest_rgw_lua ${rgw_libs})
 
-add_subdirectory(simplefile)
+add_subdirectory(sfs)
