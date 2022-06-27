@@ -11,26 +11,26 @@
  * License version 2.1, as published by the Free Software
  * Foundation. See file COPYING.
  */
-#ifndef RGW_STORE_SIMPLEFILE_ZONE_H
-#define RGW_STORE_SIMPLEFILE_ZONE_H
+#ifndef RGW_STORE_SFS_ZONE_H
+#define RGW_STORE_SFS_ZONE_H
 
 #include "rgw_sal.h"
 
 namespace rgw::sal {
 
-class SimpleFileStore;
+class SFStore;
 
-class SimpleFileZoneGroup : public ZoneGroup {
+class SFSZoneGroup : public ZoneGroup {
 
-  SimpleFileStore *store;
+  SFStore *store;
   std::unique_ptr<RGWZoneGroup> group;
   std::string empty;
 
  public:
-  SimpleFileZoneGroup(
-    SimpleFileStore *_store, std::unique_ptr<RGWZoneGroup> _group
+  SFSZoneGroup(
+    SFStore *_store, std::unique_ptr<RGWZoneGroup> _group
   ) : store(_store), group(std::move(_group)) { }
-  virtual ~SimpleFileZoneGroup() = default;
+  virtual ~SFSZoneGroup() = default;
 
   virtual const std::string& get_id() const override {
     return group->get_id();
@@ -85,21 +85,21 @@ class SimpleFileZoneGroup : public ZoneGroup {
 
 };
 
-class SimpleFileZone : public Zone {
+class SFSZone : public Zone {
  protected:
-  SimpleFileStore *store;
+  SFStore *store;
   RGWRealm *realm{nullptr};
-  SimpleFileZoneGroup *zonegroup{nullptr};
+  SFSZoneGroup *zonegroup{nullptr};
   RGWZone *zone_public_config{nullptr};
   RGWZoneParams *zone_params{nullptr};
   RGWPeriod *current_period{nullptr};
   rgw_zone_id cur_zone_id;
 
  public:
-  SimpleFileZone(const SimpleFileZone&) = delete;
-  SimpleFileZone& operator= (const SimpleFileZone&) = delete;
-  SimpleFileZone(SimpleFileStore *_store);
-  ~SimpleFileZone() {
+  SFSZone(const SFSZone&) = delete;
+  SFSZone& operator= (const SFSZone&) = delete;
+  SFSZone(SFStore *_store);
+  ~SFSZone() {
     delete realm;
     delete zonegroup;
     delete zone_public_config;
@@ -129,4 +129,4 @@ class SimpleFileZone : public Zone {
 
 } // ns rgw::sal
 
-#endif // RGW_STORE_SIMPLEFILE_ZONE_H
+#endif // RGW_STORE_SFS_ZONE_H
