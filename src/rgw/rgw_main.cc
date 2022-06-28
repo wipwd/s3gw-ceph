@@ -488,8 +488,9 @@ int radosgw_Main(int argc, const char **argv)
   } else {
     store->set_luarocks_path(luarocks_path+"/"+g_conf()->name.to_str());
   }
+  rgw::sal::RadosStore *rados = nullptr;
 #ifdef WITH_RADOSGW_LUA_PACKAGES
-  rgw::sal::RadosStore *rados = dynamic_cast<rgw::sal::RadosStore*>(store);
+  rados = dynamic_cast<rgw::sal::RadosStore*>(store);
   if (rados) { /* Supported for only RadosStore */
     rgw::lua::packages_t failed_packages;
     std::string output;
