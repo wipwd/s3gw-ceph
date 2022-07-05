@@ -395,9 +395,9 @@ int radosgw_Main(int argc, const char **argv)
   }
 #endif
 
-#ifdef WITH_RADOSGW_SIMPLEFILE
-  if (config_store == "simplefile") {
-    rgw_store = "simplefile";
+#ifdef WITH_RADOSGW_SFS
+  if (config_store == "sfs") {
+    rgw_store = "sfs";
   }
 #endif
 
