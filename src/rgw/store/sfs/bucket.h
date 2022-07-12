@@ -73,7 +73,8 @@ class SFSBucket : public Bucket {
 
   void init(
     const DoutPrefixProvider *dpp,
-    const rgw_bucket &b
+    const rgw_bucket &b,
+    const RGWUserInfo & owner
   );
 
   std::filesystem::path bucket_path() const;
