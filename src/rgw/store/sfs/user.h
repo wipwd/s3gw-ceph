@@ -81,6 +81,8 @@ class SFSUser : public User {
                          RGWUserInfo *old_info = nullptr) override;
   virtual int remove_user(const DoutPrefixProvider *dpp,
                           optional_yield y) override;
+
+  std::string get_cls_name() const { return "user"; }
 };
 
 } // ns rgw::sal
