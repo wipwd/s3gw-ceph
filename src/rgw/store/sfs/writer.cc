@@ -15,7 +15,6 @@
 #include "rgw_sal.h"
 #include "rgw_sal_sfs.h"
 #include "store/sfs/bucket.h"
-#include "store/sfs/bucket_mgr.h"
 #include "store/sfs/writer.h"
 
 #define dout_subsys ceph_subsys_rgw
@@ -29,14 +28,14 @@ SFSAtomicWriter::SFSAtomicWriter(
   optional_yield _y,
   std::unique_ptr<rgw::sal::Object> _head_obj,
   SFStore *_store,
-  BucketMgrRef _mgr,
+  sfs::BucketRef _bucketref,
   const rgw_user& _owner,
   const rgw_placement_rule *_ptail_placement_rule,
   uint64_t _olh_epoch,
   const std::string &_unique_tag
 ) : Writer(_dpp, _y), store(_store),
-    obj(_store, _head_obj->get_key(), _head_obj->get_bucket()),
-    mgr(_mgr),
+    obj(_store, _head_obj->get_key(), _head_obj->get_bucket(), _bucketref),
+    bucketref(_bucketref),
     owner(_owner),
     placement_rule(_ptail_placement_rule), olh_epoch(_olh_epoch),
     unique_tag(_unique_tag), bytes_written(0) {
@@ -47,8 +46,16 @@ SFSAtomicWriter::SFSAtomicWriter(
 }
 
 int SFSAtomicWriter::prepare(optional_yield y) {
-  lsfs_dout(dpp, 10) << ": unimplemented, return success." << dendl;
-  // TODO: create meta file for this new object
+  objref = bucketref->get_or_create(obj.get_name());
+  std::filesystem::path object_path =
+    store->get_data_path() / objref->path.to_path();
+  std::filesystem::create_directories(object_path.parent_path());
+
+  lsfs_dout(dpp, 10) << "truncate file at " << object_path << dendl;
+  std::ofstream ofs(object_path, std::ofstream::trunc);
+  ofs.seekp(0);
+  ofs.flush();
+  ofs.close();
   return 0;
 }
 
@@ -56,11 +63,16 @@ int SFSAtomicWriter::process(bufferlist &&data, uint64_t offset) {
   lsfs_dout(dpp, 10) << "data len: " << data.length()
                      << ", offset: " << offset << dendl;
 
-  std::filesystem::path object_path = obj.get_data_path();
+  std::filesystem::path object_path =
+    store->get_data_path() / objref->path.to_path();
+  ceph_assert(std::filesystem::exists(object_path));
 
   lsfs_dout(dpp, 10) << "write to object at " << object_path << dendl;
 
-  auto mode = std::ofstream::binary|std::ofstream::out|std::ofstream::app;
+  auto mode = \
+    std::ofstream::binary | \
+    std::ofstream::out | \
+    std::ofstream::app;
   std::ofstream ofs(object_path, mode);
   ofs.seekp(offset);
   data.write_stream(ofs);
@@ -102,15 +114,14 @@ int SFSAtomicWriter::complete(
 
   ceph_assert(bytes_written == accounted_size);
 
-  SFSObject::Meta &meta = obj.meta;
+  sfs::Object::Meta &meta = objref->meta;
   meta.size = accounted_size;
   meta.etag = etag;
   meta.mtime = ceph::real_clock::now();
   meta.set_mtime = set_mtime;
   meta.delete_at = delete_at;
   meta.attrs = attrs;
-  obj.write_meta();
-  mgr->add_object(&obj);
+  bucketref->finish(obj.get_name());
 
   *mtime = meta.mtime;
   return 0;
