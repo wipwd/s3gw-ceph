@@ -24,6 +24,9 @@
 
 #include "rgw_sal.h"
 #include "rgw/store/sfs/uuid_path.h"
+#include "rgw/store/sfs/sqlite/dbconn.h"
+#include "rgw/store/sfs/sqlite/sqlite_buckets.h"
+#include "rgw/store/sfs/sqlite/sqlite_objects.h"
 
 namespace rgw::sal::sfs {
 
@@ -50,12 +53,16 @@ struct Object {
   Object(const std::string &_name) 
   : name(_name), path(UUIDPath::create()), deleted(false) { }
 
+  Object(const std::string &_name, const uuid_d &_uuid, bool _deleted)
+  : name(_name), path(_uuid), deleted(_deleted) { }
+
 };
 
 using ObjectRef = std::shared_ptr<Object>;
 
 class Bucket {
 
+  CephContext *cct;
   SFStore *store;
   const std::string name;
   rgw_bucket bucket;
@@ -71,11 +78,19 @@ class Bucket {
 
   Bucket(const Bucket&) = default;
 
+ private:
+  void _refresh_objects();
+
  public:
   Bucket(
-    SFStore *_store, const rgw_bucket &_bucket, const RGWUserInfo &_owner
-  ) : store(_store), name(_bucket.name), bucket(_bucket), owner(_owner) {
+    CephContext *_cct,
+    SFStore *_store,
+    const rgw_bucket &_bucket,
+    const RGWUserInfo &_owner
+  ) : cct(_cct), store(_store), name(_bucket.name),
+      bucket(_bucket), owner(_owner) {
     creation_time = ceph::real_clock::now();
+    _refresh_objects();
   }
 
   const std::string get_name() const {
@@ -128,19 +143,7 @@ class Bucket {
     return objects[name];
   }
 
-  void finish(const std::string &name) {
-    std::lock_guard l(obj_map_lock);
-
-    auto it = creating.find(name);
-    if (it == creating.end()) {
-      return;
-    }
-
-    // finished creating the object
-    ceph_assert(objects.count(name) == 0);
-    objects[name] = creating[name];
-    creating.erase(name);
-  }
+  void finish(const DoutPrefixProvider *dpp, const std::string &objname);
 
   void delete_object(ObjectRef objref) {
     std::lock_guard l(obj_map_lock);
@@ -162,9 +165,17 @@ class Bucket {
     deleted.insert(objref);
     objects.erase(it);
   }
+
+  inline std::string get_cls_name() { return "sfs::bucket"; }
 };
 
 using BucketRef = std::shared_ptr<Bucket>;
+
+using MetaBucketsRef = std::shared_ptr<sqlite::SQLiteBuckets>;
+
+static inline MetaBucketsRef get_meta_buckets(sqlite::DBConnRef conn) {
+  return std::make_shared<sqlite::SQLiteBuckets>(conn);
+}
 
 }  // ns rgw::sal::sfs
 

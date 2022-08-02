@@ -13,19 +13,22 @@
  */
 #pragma once
 
-#include "sqlite_schema.h"
+#include "dbconn.h"
 #include "objects/object_conversions.h"
 
 namespace rgw::sal::sfs::sqlite  {
 
-class SQLiteObjects : public SQLiteSchema {
+class SQLiteObjects {
+  DBConnRef conn;
+
  public:
-  explicit SQLiteObjects(CephContext *cct);
+  explicit SQLiteObjects(DBConnRef _conn);
   virtual ~SQLiteObjects() = default;
 
   SQLiteObjects(const SQLiteObjects&) = delete;
   SQLiteObjects& operator=(const SQLiteObjects&) = delete;
 
+  std::vector<DBOPObjectInfo> get_objects(const std::string &bucket_name) const;
   std::optional<DBOPObjectInfo> get_object(const uuid_d & uuid) const;
   std::optional<DBOPObjectInfo> get_object(const std::string & bucket_name, const std::string & object_name) const;
 
