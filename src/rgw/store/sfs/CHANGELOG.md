@@ -10,6 +10,25 @@ and this project adheres to
 ## [Unreleased]
 
 ### Added
+- rgw/sfs: object versioning.
+
+
+### Notes
+- rgw/sfs Versioning.
+  #### What works
+  - Enable / disable bucket versioning.
+  - When versioning is enabled and a new object is pushed it creates a new version,
+    keeping the previous one.
+  - Objects versions list
+  - Download specific version (older versions than the last one)
+  - Object delete (delete mark is added in a new version)
+
+  #### What's missing / does not work
+  - Remove delete marks (undelete objects)
+  - Store checksum in sqlite metadata for a version
+
+## [0.3.0] - 2022-08-05
+### Added
 - rgw/sfs: new on-disk format, based on filesystem hash tree for data
   and sqlite for metadata.
 - rgw/sfs: maintain one single sqlite database connection.
@@ -32,7 +51,6 @@ and this project adheres to
 ### Removed
 - rgw/sfs: remove unused data and metadata functions, artifacts from our
   previous file-based implementation.
-
 
 ## [0.2.0] - 2022-07-28
 
