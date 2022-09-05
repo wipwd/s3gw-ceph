@@ -35,6 +35,8 @@ class SFSObject : public Object {
  protected:
   SFSObject(SFSObject&) = default;
 
+  void _refresh_meta_from_object();
+
  public:
 
   /**
@@ -94,6 +96,15 @@ class SFSObject : public Object {
     if (load_metadata) {
       refresh_meta();
     }
+  }
+  SFSObject(
+    SFStore *_st,
+    const rgw_obj_key &_k,
+    Bucket *_b,
+    sfs::BucketRef _bucketref,
+    sfs::ObjectRef _objref
+  ) : Object(_k, _b), store(_st), bucketref(_bucketref), objref(_objref) {
+    _refresh_meta_from_object();
   }
 
   virtual std::unique_ptr<Object> clone() override {
