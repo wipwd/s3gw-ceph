@@ -367,11 +367,13 @@ class SFStore : public Store {
     info.requester_pays = false;
     info.quota = db_binfo.binfo.quota;
     
+    db_binfo.battrs = attrs;
+
     auto meta_buckets = sfs::get_meta_buckets(db_conn);
     meta_buckets->store_bucket(db_binfo);
 
     sfs::BucketRef b = std::make_shared<sfs::Bucket>(
-      ctx(), this, db_binfo.binfo, owner
+      ctx(), this, db_binfo.binfo, owner, db_binfo.battrs
     );
     buckets[bucket.name] = b;
     return b;
@@ -391,7 +393,7 @@ class SFStore : public Store {
       if (!b.deleted) {
         auto user = users.get_user(b.binfo.owner.id);
         sfs::BucketRef ref = std::make_shared<sfs::Bucket>(
-          ctx(), this, b.binfo, user->uinfo
+          ctx(), this, b.binfo, user->uinfo, b.battrs
         );
         buckets[b.binfo.bucket.name] = ref;
       }
@@ -421,7 +423,6 @@ class SFStore : public Store {
 
   std::string get_cls_name() const { return "sfstore"; }
 };
-
 
 }  // namespace rgw::sal
 
