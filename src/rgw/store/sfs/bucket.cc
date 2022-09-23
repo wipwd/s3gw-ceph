@@ -45,6 +45,9 @@ std::unique_ptr<Object> SFSBucket::_get_object(sfs::ObjectRef obj) {
 }
 
 std::unique_ptr<Object> SFSBucket::get_object(const rgw_obj_key &key) {
+  // note: the current code is completely ignoring the versionID in the key.
+  // please see to 'rgw_rest_s3.cc' RGWHandler_REST_S3::init_from_header().
+
   ldout(store->ceph_context(), 10) << "bucket::" << __func__
                                    << ": key" << key << dendl;
   std::lock_guard l(bucket->obj_map_lock);
@@ -106,7 +109,7 @@ int SFSBucket::list_versions(const DoutPrefixProvider *dpp, ListParams &params,
       dirent.key = cls_rgw_obj_key(objref->name, object_version.version_id);
       dirent.meta.accounted_size = object_version.size;
       dirent.meta.mtime = object_version.creation_time;
-      dirent.meta.etag = objref->meta.etag;
+      dirent.meta.etag = object_version.etag;
       dirent.flags = rgw_bucket_dir_entry::FLAG_VER;
       if (last_version.has_value() && last_version->id == object_version.id) {
         dirent.flags |= rgw_bucket_dir_entry::FLAG_CURRENT;
@@ -133,6 +136,7 @@ int SFSBucket::remove_bucket(const DoutPrefixProvider *dpp,
       return -ENOENT;
     }
   }
+  bucket->abort_multiparts(dpp);
   // at this point bucket should be empty and we're good to go
   sfs::sqlite::SQLiteBuckets db_buckets(store->db_conn);
   auto db_bucket = db_buckets.get_bucket(get_name());
@@ -233,30 +237,81 @@ std::unique_ptr<MultipartUpload> SFSBucket::get_multipart_upload(
 ) {
   ldout(store->ceph_context(), 10) << "bucket::" << __func__ << ": oid: " << oid
                                   << ", upload id: " << upload_id << dendl;
-  auto p = new SFSMultipartUpload(
-    store->ctx(), store, this, oid, upload_id, std::move(owner), mtime
-  );
-  /** Create a multipart upload in this bucket */
-  return std::unique_ptr<SFSMultipartUpload>(p);
-  // return std::make_unique<SFSMultipartUpload>(
-  //   store, this, oid, upload_id, std::move(owner), mtime
-  // );
+
+  std::string id = upload_id.value_or("");
+  if (id.empty()) {
+    id = bucket->gen_multipart_upload_id();
+  }
+  auto mp = bucket->get_multipart(id, oid, owner, mtime);
+  return std::make_unique<SFSMultipartUpload>(store, this, bucket, mp);
 }
 
+/**
+ * @brief Obtain a list of on-going multipart uploads on this bucket.
+ * 
+ * @param dpp 
+ * @param prefix 
+ * @param marker First key (non-inclusive) to be returned. This is not the same
+ * key as the one the user provides; instead, it's the meta-key for the upload
+ * with the key the user provided.
+ * @param delim 
+ * @param max_uploads Maximum number of entries in the list. Defaults to 1000.
+ * @param uploads Vector to be populated with the results.
+ * @param common_prefixes 
+ * @param is_truncated Whether the returned list is complete.
+ * @return int 
+ */
 int SFSBucket::list_multiparts(
-    const DoutPrefixProvider *dpp, const std::string &prefix,
-    std::string &marker, const std::string &delim, const int &max_uploads,
+    const DoutPrefixProvider *dpp,
+    const std::string &prefix,
+    std::string &marker,
+    const std::string &delim,
+    const int &max_uploads,
     std::vector<std::unique_ptr<MultipartUpload>> &uploads,
-    std::map<std::string, bool> *common_prefixes, bool *is_truncated) {
+    std::map<std::string, bool> *common_prefixes,
+    bool *is_truncated
+) {
   /** List multipart uploads currently in this bucket */
-  ldpp_dout(dpp, 10) << __func__ << ": TODO" << dendl;
-  return -ENOTSUP;
+  lsfs_dout(dpp, 10) << "prefix: " << prefix << ", marker: " << marker
+                     << ", delim: " << delim << ", max_uploads: " << max_uploads
+                     << dendl;
+
+  auto mps = bucket->get_multiparts();
+  int num_uploads = 0;
+
+  // we are going to check markers by the multipart's meta string, so we need a
+  // map with those entries ordered before we can take action.
+  std::map<std::string, sfs::MultipartUploadRef> entries;
+  for (const auto &[mpid, mp] : mps) {
+    entries[mp->get_meta_str()] = mp;
+  }
+
+  for (const auto &[metastr, mp] : entries) {
+    if (num_uploads >= max_uploads) {
+      if (is_truncated) {
+        *is_truncated = true;
+      }
+      break;
+    }
+    if (metastr <= marker) {
+      continue;
+    }
+    uploads.push_back(
+      std::make_unique<SFSMultipartUpload>(store, this, bucket, mp)
+    );
+    ++ num_uploads;
+  }
+
+  return 0;
 }
 
-int SFSBucket::abort_multiparts(const DoutPrefixProvider *dpp,
-                                       CephContext *cct) {
-  ldpp_dout(dpp, 10) << __func__ << ": TODO" << dendl;
-  return -ENOTSUP;
+int SFSBucket::abort_multiparts(
+  const DoutPrefixProvider *dpp,
+  CephContext *cct
+) {
+  lsfs_dout(dpp, 10) << "aborting multiparts on bucket " << get_name() << dendl;
+  bucket->abort_multiparts(dpp);
+  return 0;
 }
 
 int SFSBucket::try_refresh_info(const DoutPrefixProvider *dpp,

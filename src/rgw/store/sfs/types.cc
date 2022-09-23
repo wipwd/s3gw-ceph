@@ -32,6 +32,10 @@ void Object::metadata_init(SFStore *store, const std::string & bucket_name,
   oinfo.bucket_name = bucket_name;
   oinfo.name = name;
 
+  // This should probably be done in one single exclusive access to the
+  // database, lest another operation happen in between and affect the version
+  // we obtain. We might have to consider to create a mechanism of sorts to lock
+  // the connection for exclusive write access for multiple operations.
   if (new_object) {
     sqlite::SQLiteObjects dbobjs(store->db_conn);
     dbobjs.store_object(oinfo);
@@ -78,7 +82,54 @@ void Object::metadata_finish(SFStore *store) {
   db_versioned_object->size = meta.size;
   db_versioned_object->creation_time = meta.mtime;
   db_versioned_object->object_state = ObjectState::COMMITTED;
+  db_versioned_object->etag = meta.etag;
   db_versioned_objs.store_versioned_object(*db_versioned_object);
+}
+
+void MultipartObject::_abort(const DoutPrefixProvider *dpp) {
+  // assumes being called while holding the lock.
+  ceph_assert(aborted);
+  state = State::ABORTED;
+  auto path = objref->path.to_path();
+  if (std::filesystem::exists(path)) {
+    // destroy part's contents
+    if (dpp) {
+      lsfs_dout(dpp, 10) << "remove part contents at " << path << dendl;
+    }
+    std::filesystem::remove(path);
+  }
+  objref.reset();
+}
+
+void MultipartObject::abort(const DoutPrefixProvider *dpp) {
+  std::lock_guard l(lock);
+  lsfs_dout(dpp, 10) << "abort part for upload id: " << upload_id
+                     << ", state: " << state << dendl;
+  if (state == State::ABORTED) {
+    return;
+  }
+
+  aborted = true;
+  if (state == State::INPROGRESS) {
+    lsfs_dout(dpp, 10) << "part upload in progress, wait to abort." << dendl;
+    return;
+  }
+  _abort(dpp);
+}
+
+void MultipartUpload::abort(const DoutPrefixProvider *dpp) {
+  std::lock_guard l(parts_map_lock);
+  lsfs_dout(dpp, 10) << "aborting multipart upload id: " << upload_id
+                     << ", object: " << objref->name
+                     << ", num parts: " << parts.size()
+                     << dendl;
+
+  state = State::ABORTED;
+  for (const auto &[id, part] : parts) {
+    part->abort(dpp);
+  }
+  parts.clear();
+  objref.reset();
 }
 
 ObjectRef Bucket::get_or_create(const rgw_obj_key &key) {
@@ -111,10 +162,14 @@ void Bucket::finish(const DoutPrefixProvider *dpp, const std::string &objname) {
   // finished creating the object
 
   ObjectRef ref = objects[objname];
+  _finish_object(ref);
+}
+
+void Bucket::_finish_object(ObjectRef ref) {
   sqlite::DBOPObjectInfo oinfo;
   oinfo.uuid = ref->path.get_uuid();
   oinfo.bucket_name = info.bucket.name;
-  oinfo.name = objname;
+  oinfo.name = ref->name;
   oinfo.size = ref->meta.size;
   oinfo.etag = ref->meta.etag;
   oinfo.mtime = ref->meta.mtime;

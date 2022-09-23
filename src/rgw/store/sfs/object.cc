@@ -14,6 +14,7 @@
 #include "rgw_sal_sfs.h"
 #include "store/sfs/object.h"
 #include "store/sfs/sqlite/sqlite_versioned_objects.h"
+#include "store/sfs/multipart.h"
 
 #define dout_subsys ceph_subsys_rgw
 
@@ -87,14 +88,16 @@ int SFSObject::SFSReadOp::read(int64_t ofs, int64_t end,
                        << ". Returning EIO." << dendl;
     return -EIO;
   }
-  return 0;
+  return len;
 }
 
 // async read
-int SFSObject::SFSReadOp::iterate(const DoutPrefixProvider *dpp,
-                                                int64_t ofs, int64_t end,
-                                                RGWGetDataCB *cb,
-                                                optional_yield y) {
+int SFSObject::SFSReadOp::iterate(
+  const DoutPrefixProvider *dpp,
+  int64_t ofs, int64_t end,
+  RGWGetDataCB *cb,
+  optional_yield y
+) {
   // TODO bounds check, etc.
   const auto len = end + 1 - ofs;
   lsfs_dout(dpp, 10) << "bucket: " << source->bucket->get_name()
@@ -104,22 +107,34 @@ int SFSObject::SFSReadOp::iterate(const DoutPrefixProvider *dpp,
                      << ", end: " << end
                      << ", len: " << len << dendl;
 
-  // auto objpath = source->get_data_path();
-  // ceph_assert(std::filesystem::exists(objpath));
   ceph_assert(std::filesystem::exists(objdata));
-
-  // TODO chunk the read
-  bufferlist bl;
   std::string error;
-  int ret = bl.pread_file(objdata.c_str(), ofs, len, &error);
-  if (ret < 0) {
-    lsfs_dout(dpp, 10) << "failed to read object from file " << objdata
-                       << ". Returning EIO." << dendl;
-    return -EIO;
-  }
 
-  cb->handle_data(bl, ofs, len);
-  return 0;
+  const uint64_t max_chunk_size = 10485760;  // 10MB
+  uint64_t missing = len;
+  while (missing > 0) {
+    uint64_t size = std::min(missing, max_chunk_size);
+    bufferlist bl;
+    int ret = bl.pread_file(objdata.c_str(), ofs, size, &error);
+    if (ret < 0) {
+      lsfs_dout(dpp, 0) << "failed to read object from file '" << objdata
+                        << ", offset: " << ofs << ", size: " << size
+                        << ": " << error << dendl;
+      return -EIO;
+    }
+    missing -= size;
+    lsfs_dout(dpp, 10) << "return " << size << "/" << len
+                       << ", offset: " << ofs
+                       << ", missing: " << missing << dendl;
+    ret = cb->handle_data(bl, 0, size);
+    if (ret < 0) {
+      lsfs_dout(dpp, 0) << "failed to return object data: " << ret << dendl;
+      return -EIO;
+    }
+
+    ofs += size;
+  }
+  return len;
 }
 
 SFSObject::SFSDeleteOp::SFSDeleteOp(
@@ -250,11 +265,13 @@ void SFSObject::gen_rand_obj_instance_name() {
   state.obj.key.set_instance(buf);
 }
 
-int SFSObject::get_obj_attrs(optional_yield y,
-                                    const DoutPrefixProvider *dpp,
-                                    rgw_obj *target_obj) {
-  ldpp_dout(dpp, 10) << __func__ << ": TODO" << dendl;
-  return -ENOTSUP;
+int SFSObject::get_obj_attrs(
+  optional_yield y,
+  const DoutPrefixProvider *dpp,
+  rgw_obj *target_obj
+) {
+  lsfs_dout(dpp, 10) << " TODO" << dendl;
+  return 0;
 }
 int SFSObject::modify_obj_attrs(const char *attr_name,
                                        bufferlist &attr_val, optional_yield y,
@@ -270,10 +287,12 @@ int SFSObject::delete_obj_attrs(const DoutPrefixProvider *dpp,
   return -ENOTSUP;
 }
 
-MPSerializer *SFSObject::get_serializer(const DoutPrefixProvider *dpp,
-                                               const std::string &lock_name) {
-  ldpp_dout(dpp, 10) << __func__ << ": TODO" << dendl;
-  return nullptr;
+MPSerializer *SFSObject::get_serializer(
+  const DoutPrefixProvider *dpp,
+  const std::string &lock_name
+) {
+  lsfs_dout(dpp, 10) << "lock name: " << lock_name << dendl;
+  return new SFSMultipartSerializer();
 }
 
 int SFSObject::transition(Bucket *bucket,
@@ -369,6 +388,11 @@ void SFSObject::refresh_meta() {
     // object probably not created yet?
     return;
   }
+  _refresh_meta_from_object();
+}
+
+void SFSObject::_refresh_meta_from_object() {
+  ceph_assert(objref);
   auto meta = objref->meta;
   if (!get_instance().empty() && get_instance() != objref->instance) {
     // object specific version requested and it's not the last one
