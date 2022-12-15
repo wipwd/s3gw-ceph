@@ -165,7 +165,8 @@ set(librgw_common_srcs
   rgw_lua.cc
   rgw_bucket_encryption.cc
   rgw_tracer.cc
-  rgw_lua_background.cc)
+  rgw_lua_background.cc
+  rgw_op_type.cc)
 
 if(WITH_RADOSGW_AMQP_ENDPOINT)
   list(APPEND librgw_common_srcs rgw_amqp.cc)
@@ -354,7 +355,9 @@ set(rgw_schedulers_srcs
 set(radosgw_srcs
   rgw_loadgen_process.cc
   rgw_asio_client.cc
-  rgw_asio_frontend.cc)
+  rgw_asio_frontend.cc
+  rgw_status_frontend.cc
+  rgw_status_page.cc)
 
 add_library(rgw_schedulers STATIC ${rgw_schedulers_srcs})
 target_link_libraries(rgw_schedulers

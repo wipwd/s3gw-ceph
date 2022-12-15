@@ -2,6 +2,7 @@
 // vim: ts=8 sw=2 smarttab ft=cpp
 
 #include <boost/intrusive/list.hpp>
+#include <memory>
 #include "common/ceph_argparse.h"
 #include "global/global_init.h"
 #include "global/signal_handler.h"
@@ -33,6 +34,7 @@
 #include "rgw_rest_realm.h"
 #include "rgw_rest_sts.h"
 #include "rgw_rest_ratelimit.h"
+#include "rgw_sal_sfs.h"
 #include "rgw_swift_auth.h"
 #include "rgw_log.h"
 #include "rgw_tools.h"
@@ -51,6 +53,7 @@
 #include "rgw_kafka.h"
 #endif
 #include "rgw_asio_frontend.h"
+#include "rgw_status_frontend.h"
 #include "rgw_dmclock_scheduler_ctx.h"
 #ifdef WITH_RADOSGW_LUA_PACKAGES
 #include "rgw_lua.h"
@@ -669,6 +672,19 @@ int radosgw_Main(int argc, const char **argv)
       RGWProcessEnv env{ store, &rest, olog, port, uri_prefix, 
                          auth_registry, &ratelimiting, lua_background.get()};
       fe = new RGWAsioFrontend(env, config, sched_ctx);
+    }
+    else if (framework == "status") {
+      RGWProcessEnv env{ store, &rest, olog, 0, "",
+                         auth_registry, &ratelimiting, lua_background.get()};
+
+      RGWStatusFrontend* stat = new RGWStatusFrontend(env, config, cct->get());
+      stat->register_status_page(std::make_unique<PerfCounterStatusPage>(cct->get_perfcounters_collection()));
+      stat->register_status_page(std::make_unique<PrometheusStatusPage>(cct->get_perfcounters_collection()));
+      if (store->get_name() == "sfs") {
+	auto sfs = dynamic_cast<rgw::sal::SFStore*>(store);
+	stat->register_status_page(sfs->make_status_page());
+      }
+      fe = stat;
     }
 
     service_map_meta["frontend_type#" + stringify(fe_count)] = framework;
