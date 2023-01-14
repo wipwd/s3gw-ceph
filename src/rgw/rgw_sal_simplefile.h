@@ -79,7 +79,6 @@ class UnsupportedLuaManager : public StoreLuaManager {
 
 class SimpleFileStore : public StoreDriver {
  private:
-  RGWUserInfo dummy_user;
   RGWSyncModuleInstanceRef sync_module;
   SimpleFileZone zone;
   const std::filesystem::path data_path;
