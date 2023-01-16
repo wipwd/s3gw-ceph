@@ -485,6 +485,7 @@ int SFStore::initialize(
   const DoutPrefixProvider* dpp
 ) {
   ldpp_dout(dpp, 10) << __func__ << dendl;
+  gc->initialize();
   return 0;
 }
 
