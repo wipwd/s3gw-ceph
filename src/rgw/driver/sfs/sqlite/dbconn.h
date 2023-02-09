@@ -13,6 +13,7 @@
  */
 #pragma once
 
+#include <sqlite3.h>
 #include <memory>
 #include <filesystem>
 #include "common/ceph_mutex.h"
@@ -127,13 +128,16 @@ class DBConn {
   Storage storage;
 
  public:
-  ceph::shared_mutex rwlock = ceph::make_shared_mutex("dbconn::rwlock");
   sqlite3 *sqlite_db;
 
   DBConn(CephContext *cct)
   : storage(_make_storage(getDBPath(cct))) {
     storage.on_open = [this](sqlite3 *db) {
       sqlite_db = db;
+
+      sqlite3_extended_result_codes(db, 1);
+      sqlite3_busy_timeout(db, 10000);
+      sqlite3_exec(db, "PRAGMA journal_mode=WAL;PRAGMA synchronous=normal;PRAGMA temp_store = memory;PRAGMA mmap_size = 30000000000;", 0, 0, 0);
     };
     storage.open_forever();
     storage.busy_timeout(5000);
