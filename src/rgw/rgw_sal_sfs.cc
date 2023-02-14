@@ -20,11 +20,13 @@
 
 #include <sstream>
 #include <system_error>
+#include <thread>
 
 #include "cls/rgw/cls_rgw_client.h"
 #include "common/Clock.h"
 #include "common/ceph_mutex.h"
 #include "common/errno.h"
+#include "include/util.h"
 #include "rgw_acl_s3.h"
 #include "rgw_aio.h"
 #include "rgw_aio_throttle.h"
@@ -502,17 +504,50 @@ void SFStore::maybe_init_store() {
 
 }
 
-SFStore::SFStore(
-  CephContext *c,
-  const std::filesystem::path &data_path
-) : sync_module(),
-    zone(this),
-    data_path(data_path),
-    cctx(c) {
+void SFStore::filesystem_stats_updater_main(
+    std::chrono::milliseconds update_interval) {
+  while (true) {
+    std::unique_lock lock(filesystem_stats_updater_mutex);
+    ldout(ctx(), 20) << __func__ << ": updating filesystem stats" << dendl;
 
+    ceph_data_stats_t stats;
+    int ret = get_fs_stats(stats, data_path.c_str());
+    ceph_assert(ret >= 0);
+
+    filesystem_stats_avail_bytes = stats.byte_avail;
+    filesystem_stats_avail_percent = stats.avail_percent;
+    filesystem_stats_total_bytes = stats.byte_total;
+
+    const auto shutdown_requested = filesystem_stats_updater_cvar.wait_for(
+        lock, update_interval, [&] { return shutdown; });
+    if (shutdown_requested) {
+      ldout(ctx(), 10) << __func__ << ": shutting down filesystem stats updater"
+                       << dendl;
+      break;
+    }
+  }
+}
+
+SFStore::SFStore(CephContext* c, const std::filesystem::path& data_path)
+    : sync_module(),
+      zone(this),
+      data_path(data_path),
+      cctx(c),
+      shutdown(false),
+      filesystem_stats_updater_mutex(ceph::make_mutex("sfs:filesystemstats")),
+      filesystem_stats_total_bytes(std::numeric_limits<uint64_t>::max()),
+      filesystem_stats_avail_bytes(std::numeric_limits<uint64_t>::max()),
+      filesystem_stats_avail_percent(100),
+      min_space_left_for_data_write_ops_bytes(
+          c->_conf.get_val<uint64_t>("rgw_sfs_min_space_left_for_write_ops")) {
   maybe_init_store();
   db_conn = std::make_shared<sfs::sqlite::DBConn>(cctx);
   gc = std::make_shared<sfs::SFSGC>(cctx, this);
+
+  filesystem_stats_updater = make_named_thread(
+      "sfs_stats_updater", &SFStore::filesystem_stats_updater_main, this,
+      c->_conf.get_val<std::chrono::milliseconds>(
+          "rgw_sfs_stats_update_interval"));
 
   // no need to be safe, we're in the ctor.
   _refresh_buckets();
@@ -520,7 +555,14 @@ SFStore::SFStore(
   ldout(ctx(), 0) << "sfs serving data from " << data_path << dendl;
 }
 
-SFStore::~SFStore() { }
+SFStore::~SFStore() {
+  shutdown = true;
+
+  if (filesystem_stats_updater.joinable()) {
+    filesystem_stats_updater_cvar.notify_all(true);
+    filesystem_stats_updater.join();
+  }
+}
 
 }  // namespace rgw::sal
 
