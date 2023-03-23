@@ -27,36 +27,197 @@
 
 namespace rgw::sal::sfs {
 
+Object::Object(const std::string& _name, const uuid_d& _uuid)
+    : name(_name), path(_uuid), deleted(false) {}
+
+Object* Object::create_for_immediate_deletion(
+    const sqlite::DBOPObjectInfo& object
+) {
+  Object* result = new Object(object.name, object.uuid);
+  result->deleted = true;
+  return result;
+}
+
+Object* Object::create_for_query(
+    const std::string& name, const uuid_d& uuid, bool deleted, uint version_id
+) {
+  Object* result = new Object(name, uuid);
+  result->deleted = deleted;
+  result->version_id = version_id;
+  return result;
+}
+
+Object* Object::create_for_testing(const std::string& name) {
+  Object* result = new Object(name, UUIDPath::create().get_uuid());
+  return result;
+}
+
+Object* Object::create_from_obj_key(const rgw_obj_key& key) {
+  Object* result = new Object(key);
+  return result;
+}
+
+Object* Object::create_for_multipart(const std::string& name) {
+  Object* result = new Object(name, UUIDPath::create().get_uuid());
+  return result;
+}
+
+Object* Object::create_commit_delete_marker(
+    const rgw_obj_key& key, SFStore* store, const std::string& bucket_id
+) {
+  Object* result = new Object(key);
+  result->deleted = true;
+
+  sqlite::DBOPObjectInfo oinfo;
+  oinfo.uuid = result->path.get_uuid();
+  oinfo.bucket_id = bucket_id;
+  oinfo.name = result->name;
+
+  sqlite::SQLiteObjects dbobjs(store->db_conn);
+  dbobjs.store_object(oinfo);
+  return result;
+}
+
+Object* Object::create_commit_new_object(
+    const rgw_obj_key& key, SFStore* store, const std::string& bucket_id,
+    const std::string* version_id
+) {
+  Object* result = new Object(key);
+
+  if (version_id != nullptr) {
+    result->instance = *version_id;
+  }
+
+  sqlite::DBOPObjectInfo oinfo;
+  oinfo.uuid = result->path.get_uuid();
+  oinfo.bucket_id = bucket_id;
+  oinfo.name = result->name;
+
+  // TODO(https://github.com/aquarist-labs/s3gw/issues/378) make
+  // object and version insert a transaction
+  sqlite::SQLiteObjects dbobjs(store->db_conn);
+  dbobjs.store_object(oinfo);
+
+  sqlite::DBOPVersionedObjectInfo version_info;
+  version_info.object_id = result->path.get_uuid();
+  version_info.object_state = ObjectState::OPEN;
+  version_info.version_id = result->instance;
+  sqlite::SQLiteVersionedObjects db_versioned_objs(store->db_conn);
+  result->version_id = db_versioned_objs.insert_versioned_object(version_info);
+  return result;
+}
+
+Object* Object::try_create_with_last_version_fetch_from_database(
+    SFStore* store, const std::string& name, const std::string& bucket_id
+) {
+  sqlite::SQLiteObjects objs(store->db_conn);
+  auto obj = objs.get_object(bucket_id, name);
+  if (!obj) {
+    return nullptr;
+  }
+
+  sqlite::SQLiteVersionedObjects objs_versions(store->db_conn);
+  auto last_version = objs_versions.get_last_versioned_object(obj->uuid);
+  if (!last_version.has_value()) {
+    return nullptr;
+  }
+
+  Object* result = new Object(name, obj->uuid);
+  result->deleted = (last_version->object_state == ObjectState::DELETED);
+  result->version_id = last_version->id;
+  result->meta = {
+      .size = obj->size,
+      .etag = obj->etag,
+      .mtime = obj->mtime,
+      .set_mtime = obj->set_mtime,
+      .delete_at = obj->delete_at};
+  result->attrs = last_version->attrs;
+  result->instance = last_version->version_id;
+
+  return result;
+}
+
+Object* Object::try_create_fetch_from_database(
+    SFStore* store, const std::string& name, const std::string& bucket_id,
+    const std::string& version_id
+) {
+  sqlite::SQLiteObjects objs(store->db_conn);
+  auto obj = objs.get_object(bucket_id, name);
+  if (!obj) {
+    return nullptr;
+  }
+
+  sqlite::SQLiteVersionedObjects objs_versions(store->db_conn);
+  auto version = objs_versions.get_versioned_object(version_id);
+  if (!version.has_value()) {
+    return nullptr;
+  }
+
+  Object* result = new Object(name, obj->uuid);
+  result->deleted = (version->object_state == ObjectState::DELETED);
+  result->version_id = version->id;
+  result->meta = {
+      .size = obj->size,
+      .etag = obj->etag,
+      .mtime = obj->mtime,
+      .set_mtime = obj->set_mtime,
+      .delete_at = obj->delete_at};
+  result->attrs = version->attrs;
+  result->instance = version->version_id;
+  return result;
+}
+
 std::filesystem::path Object::get_storage_path() const {
   return path.to_path() / std::to_string(version_id);
 }
 
-void Object::metadata_init(
-    SFStore* store, const std::string& bucket_id, bool new_object,
-    bool new_version
+const Object::Meta Object::get_meta() const {
+  return Object::Meta(meta);
+}
+
+const Object::Meta Object::get_default_meta() const {
+  return Object::Meta();
+}
+
+void Object::update_meta(const Meta& update) {
+  meta = update;
+}
+
+bool Object::get_attr(const std::string& name, bufferlist& dest) {
+  auto iter = attrs.find(name);
+  if (iter != attrs.end()) {
+    dest = iter->second;
+    return true;
+  }
+  return false;
+}
+
+void Object::set_attr(const std::string& name, bufferlist& value) {
+  attrs[name] = value;
+}
+
+Attrs::size_type Object::del_attr(const std::string& name) {
+  return attrs.erase(name);
+}
+
+Attrs Object::get_attrs() {
+  return attrs;
+}
+
+void Object::update_attrs(const Attrs& update) {
+  attrs = update;
+}
+
+void Object::update_commit_new_version(
+    SFStore* store, const std::string& new_version
 ) {
-  sqlite::DBOPObjectInfo oinfo;
-  oinfo.uuid = path.get_uuid();
-  oinfo.bucket_id = bucket_id;
-  oinfo.name = name;
-
-  // This should probably be done in one single exclusive access to the
-  // database, lest another operation happen in between and affect the version
-  // we obtain. We might have to consider to create a mechanism of sorts to lock
-  // the connection for exclusive write access for multiple operations.
-  if (new_object) {
-    sqlite::SQLiteObjects dbobjs(store->db_conn);
-    dbobjs.store_object(oinfo);
-  }
-
-  if (new_version) {
-    sqlite::DBOPVersionedObjectInfo version_info;
-    version_info.object_id = path.get_uuid();
-    version_info.object_state = ObjectState::OPEN;
-    version_info.version_id = instance;
-    sqlite::SQLiteVersionedObjects db_versioned_objs(store->db_conn);
-    version_id = db_versioned_objs.insert_versioned_object(version_info);
-  }
+  sqlite::DBOPVersionedObjectInfo version_info;
+  version_info.object_id = path.get_uuid();
+  version_info.object_state = ObjectState::OPEN;
+  version_info.version_id = new_version;
+  sqlite::SQLiteVersionedObjects db_versioned_objs(store->db_conn);
+  version_id = db_versioned_objs.insert_versioned_object(version_info);
+  instance = new_version;
 }
 
 void Object::metadata_change_version_state(SFStore* store, ObjectState state) {
@@ -75,7 +236,7 @@ void Object::metadata_flush_attrs(SFStore* store) {
   sqlite::SQLiteVersionedObjects db_versioned_objs(store->db_conn);
   auto versioned_object = db_versioned_objs.get_versioned_object(version_id);
   ceph_assert(versioned_object.has_value());
-  versioned_object->attrs = meta.attrs;
+  versioned_object->attrs = get_attrs();
   db_versioned_objs.store_versioned_object(*versioned_object);
 }
 
@@ -99,35 +260,31 @@ void Object::metadata_finish(SFStore* store) {
   db_versioned_object->creation_time = meta.mtime;
   db_versioned_object->object_state = ObjectState::COMMITTED;
   db_versioned_object->etag = meta.etag;
-  db_versioned_object->attrs = meta.attrs;
+  db_versioned_object->attrs = get_attrs();
   db_versioned_objs.store_versioned_object(*db_versioned_object);
 }
 
-int Object::delete_object_version(SFStore* store) {
-  // remove object data
-  std::filesystem::remove(store->get_data_path() / get_storage_path());
-
+int Object::delete_object_version(SFStore* store) const {
   // remove metadata
   sqlite::SQLiteVersionedObjects db_versioned_objs(store->db_conn);
   db_versioned_objs.remove_versioned_object(version_id);
   return 0;
 }
 
-void Object::delete_object(SFStore* store) {
-  // remove object folder
-  std::filesystem::remove(store->get_data_path() / path.to_path());
+void Object::delete_object_metadata(SFStore* store) const {
   // remove metadata
   sqlite::SQLiteObjects db_objs(store->db_conn);
   db_objs.remove_object(path.get_uuid());
 }
 
-bool Object::get_attr(const std::string& name, bufferlist& dest) {
-  auto iter = meta.attrs.find(name);
-  if (iter != meta.attrs.end()) {
-    dest = iter->second;
-    return true;
+void Object::delete_object_data(SFStore* store, bool all) const {
+  if (all) {
+    // remove object folder
+    std::filesystem::remove(store->get_data_path() / path.to_path());
+  } else {
+    // remove object data
+    std::filesystem::remove(store->get_data_path() / get_storage_path());
   }
-  return false;
 }
 
 void MultipartObject::_abort(const DoutPrefixProvider* dpp) {
@@ -176,58 +333,70 @@ void MultipartUpload::abort(const DoutPrefixProvider* dpp) {
 }
 
 ObjectRef Bucket::get_or_create(const rgw_obj_key& key) {
-  std::lock_guard l(obj_map_lock);
-  ObjectRef obj = nullptr;
-  auto new_object = true;
-  auto create_new_version = true;
-  auto it = objects.find(key.name);
-  if (it != objects.end()) {
-    obj = it->second;
-    new_object = false;
-    if (key.instance.empty() || key.instance == obj->instance) {
-      create_new_version = false;
-    } else {
-      obj->instance = key.instance;
-    }
-  } else {
-    obj = std::make_shared<Object>(key);
-    objects[key.name] = obj;
-  }
-  obj->metadata_init(
-      store, info.bucket.bucket_id, new_object, create_new_version
+  const bool wants_specific_version = !key.instance.empty();
+  ObjectRef result;
+
+  auto maybe_result = Object::try_create_with_last_version_fetch_from_database(
+      store, key.name, info.bucket.bucket_id
   );
 
-  return obj;
+  if (maybe_result == nullptr) {  // new object
+    result.reset(Object::create_commit_new_object(
+        key, store, info.bucket.bucket_id, &key.instance
+    ));
+    return result;
+  }
+
+  // an object exists with at least 1 version
+  if (wants_specific_version && maybe_result->instance == key.instance) {
+    // requested version happens to be the last version
+    result.reset(maybe_result);
+  } else if (wants_specific_version && maybe_result->instance != key.instance) {
+    // requested version is not last
+
+    auto specific_version_object = Object::try_create_fetch_from_database(
+        store, key.name, info.bucket.bucket_id, key.instance
+    );
+
+    if (specific_version_object == nullptr) {
+      // requested version does not exist -> create it from last
+      // version object
+      result.reset(maybe_result);
+      result->update_commit_new_version(store, key.instance);
+    } else {
+      // requested version does exist -> return it
+      result.reset(specific_version_object);
+    }
+  } else {
+    // no specific version requested - return last
+    result.reset(maybe_result);
+  }
+
+  ceph_assert(result);
+  return result;
 }
 
-void Bucket::finish(const DoutPrefixProvider* dpp, const std::string& objname) {
-  std::lock_guard l(obj_map_lock);
+ObjectRef Bucket::get(const std::string& name) {
+  auto maybe_result = Object::try_create_with_last_version_fetch_from_database(
+      store, name, info.bucket.bucket_id
+  );
 
-  // finished creating the object
-
-  ObjectRef ref = objects[objname];
-  _finish_object(ref);
+  if (maybe_result == nullptr) {
+    throw UnknownObjectException();
+  }
+  return std::shared_ptr<Object>(maybe_result);
 }
 
-void Bucket::_finish_object(ObjectRef ref) {
-  sqlite::DBOPObjectInfo oinfo;
-  oinfo.uuid = ref->path.get_uuid();
-  oinfo.bucket_id = info.bucket.bucket_id;
-  oinfo.name = ref->name;
-  oinfo.size = ref->meta.size;
-  oinfo.etag = ref->meta.etag;
-  oinfo.mtime = ref->meta.mtime;
-  oinfo.set_mtime = ref->meta.set_mtime;
-  oinfo.delete_at = ref->meta.delete_at;
-  ref->deleted = false;
-
+std::vector<ObjectRef> Bucket::get_all() {
+  std::vector<ObjectRef> result;
   sqlite::SQLiteObjects dbobjs(store->db_conn);
-  dbobjs.store_object(oinfo);
+  for (const auto& db_obj : dbobjs.get_objects(info.bucket.bucket_id)) {
+    result.push_back(get(db_obj.name));
+  }
+  return result;
 }
 
 void Bucket::delete_object(ObjectRef objref, const rgw_obj_key& key) {
-  std::lock_guard l(obj_map_lock);
-
   sqlite::SQLiteVersionedObjects db_versioned_objs(store->db_conn);
   // get the last available version to make a copy changing the object state to DELETED
   auto last_version =
@@ -260,12 +429,9 @@ void Bucket::delete_object(ObjectRef objref, const rgw_obj_key& key) {
 std::string Bucket::create_non_existing_object_delete_marker(
     const rgw_obj_key& key
 ) {
-  std::lock_guard l(obj_map_lock);
-
-  auto obj = std::make_shared<Object>(key);
-  obj->deleted = true;
-  objects[key.name] = obj;
-  obj->metadata_init(store, info.bucket.bucket_id, true, false);
+  auto obj = std::shared_ptr<Object>(
+      Object::create_commit_delete_marker(key, store, info.bucket.bucket_id)
+  );
 // create the delete marker
 // generate a new version id
 #define OBJ_INSTANCE_LEN 32
@@ -306,7 +472,6 @@ void Bucket::_undelete_object(
         objref->deleted = false;
       } else {
         // all versions were removed for this object
-        objects.erase(key.name);
       }
     }
   } else {
@@ -316,29 +481,6 @@ void Bucket::_undelete_object(
     last_version.deletion_time = ceph::real_clock::now();
     sqlite_versioned_objects.store_versioned_object(last_version);
     objref->deleted = false;
-  }
-}
-
-void Bucket::_refresh_objects() {
-  sqlite::SQLiteObjects objs(store->db_conn);
-  auto existing = objs.get_objects(info.bucket.bucket_id);
-  for (const auto& obj : existing) {
-    sqlite::SQLiteVersionedObjects objs_versions(store->db_conn);
-    auto last_version = objs_versions.get_last_versioned_object(obj.uuid);
-    if (last_version.has_value()) {
-      ObjectRef ref = std::make_shared<Object>(obj.name, obj.uuid, false);
-      ref->meta.size = obj.size;
-      ref->meta.etag = obj.etag;
-      ref->meta.mtime = obj.mtime;
-      ref->meta.set_mtime = obj.set_mtime;
-      ref->meta.delete_at = obj.delete_at;
-      ref->meta.attrs = last_version->attrs;
-      ref->version_id = last_version->id;
-      ref->instance = last_version->version_id;
-      ref->deleted = (last_version->object_state == ObjectState::DELETED);
-
-      objects[obj.name] = ref;
-    }
   }
 }
 

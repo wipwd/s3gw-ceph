@@ -26,6 +26,8 @@
 #include "rgw/driver/sfs/sqlite/sqlite_objects.h"
 #include "rgw/driver/sfs/sqlite/sqlite_versioned_objects.h"
 #include "rgw/driver/sfs/uuid_path.h"
+#include "rgw_common.h"
+#include "rgw_sal.h"
 
 namespace rgw::sal {
 class SFStore;
@@ -35,28 +37,28 @@ namespace rgw::sal::sfs {
 
 struct UnknownObjectException : public std::exception {};
 
-struct Object {
+class Object {
+ public:
   struct Meta {
     size_t size;
     std::string etag;
     ceph::real_time mtime;
     ceph::real_time set_mtime;
     ceph::real_time delete_at;
-    std::map<std::string, bufferlist> attrs;
   };
 
   std::string name;
   std::string instance;
   uint version_id{0};
   UUIDPath path;
-  Meta meta;
   bool deleted;
 
-  Object(const std::string& _name)
-      : name(_name), path(UUIDPath::create()), deleted(false) {}
+ private:
+  Meta meta;
+  std::map<std::string, bufferlist> attrs;
 
-  Object(const std::string& _name, const uuid_d& _uuid, bool _deleted)
-      : name(_name), path(_uuid), deleted(_deleted) {}
+ protected:
+  Object(const std::string& _name, const uuid_d& _uuid);
 
   Object(const rgw_obj_key& key)
       : name(key.name),
@@ -64,21 +66,68 @@ struct Object {
         path(UUIDPath::create()),
         deleted(false) {}
 
-  std::filesystem::path get_storage_path() const;
-
-  void metadata_init(
-      SFStore* store, const std::string& bucket_id, bool new_object,
-      bool new_version
+ public:
+  static Object* create_for_immediate_deletion(
+      const sqlite::DBOPObjectInfo& object
   );
-  void metadata_change_version_state(SFStore* store, ObjectState state);
-  void metadata_finish(SFStore* store);
+  static Object* create_for_query(
+      const std::string& name, const uuid_d& uuid, bool deleted, uint version_id
+  );
+  static Object* create_for_testing(const std::string& name);
+  static Object* create_from_obj_key(const rgw_obj_key& key);
+  static Object* create_for_multipart(const std::string& name);
 
-  void metadata_flush_attrs(SFStore* store);
+  static Object* create_commit_delete_marker(
+      const rgw_obj_key& key, SFStore* store, const std::string& bucket_id
+  );
+  static Object* create_commit_new_object(
+      const rgw_obj_key& key, SFStore* store, const std::string& bucket_id,
+      const std::string* version_id
+  );
 
-  int delete_object_version(SFStore* store);
-  void delete_object(SFStore* store);
+  static Object* try_create_with_last_version_fetch_from_database(
+      SFStore* store, const std::string& name, const std::string& bucket_id
+  );
+  static Object* try_create_fetch_from_database(
+      SFStore* store, const std::string& name, const std::string& bucket_id,
+      const std::string& version_id
+  );
+
+  const Meta get_meta() const;
+  const Meta get_default_meta() const;
+  void update_meta(const Meta& update);
 
   bool get_attr(const std::string& name, bufferlist& dest);
+  void set_attr(const std::string& name, bufferlist& value);
+  Attrs::size_type del_attr(const std::string& name);
+  Attrs get_attrs();
+  void update_attrs(const Attrs& update);
+
+  std::filesystem::path get_storage_path() const;
+
+  /// Update version and commit to database
+  void update_commit_new_version(SFStore* store, const std::string& version_id);
+
+  /// Change obj version state.
+  // Use this for example to update objs to in flight states like
+  // WRITING.
+  // Special case: DELETED sets this to deleted
+  // and commits a deletion time
+  void metadata_change_version_state(SFStore* store, ObjectState state);
+
+  /// Commit all object state to database
+  // Including meta and attrs
+  // Sets obj version state to COMMITTED
+  void metadata_finish(SFStore* store);
+
+  /// Commit attrs to database
+  void metadata_flush_attrs(SFStore* store);
+
+  int delete_object_version(SFStore* store) const;
+  void delete_object_metadata(SFStore* store) const;
+  /// Delete object _data_ (e.g payload of PUT operations) from disk.
+  // Set all=true to delete all versions, not just this version.
+  void delete_object_data(SFStore* store, bool all) const;
 };
 
 using ObjectRef = std::shared_ptr<Object>;
@@ -212,7 +261,8 @@ struct MultipartUpload {
     }
     std::string part_obj_name =
         objref->name + "." + upload_id + ".part." + std::to_string(part_num);
-    auto part_obj = std::make_shared<Object>(part_obj_name);
+    auto part_obj =
+        std::shared_ptr<Object>(Object::create_for_multipart(part_obj_name));
     auto part = std::make_shared<MultipartObject>(part_obj, upload_id);
     parts[part_num] = part;
     return part;
@@ -254,21 +304,17 @@ class Bucket {
   bool deleted{false};
 
  public:
-  std::map<std::string, ObjectRef> objects;
-  ceph::mutex obj_map_lock = ceph::make_mutex("obj_map_lock");
   ceph::mutex multipart_map_lock = ceph::make_mutex("multipart_map_lock");
   std::map<std::string, MultipartUploadRef> multiparts;
 
-  Bucket(const Bucket&) = default;
+  Bucket(const Bucket&) = delete;
 
  private:
-  void _refresh_objects();
   void _undelete_object(
       ObjectRef objref, const rgw_obj_key& key,
       sqlite::SQLiteVersionedObjects& sqlite_versioned_objects,
       sqlite::DBOPVersionedObjectInfo& last_version
   );
-  void _finish_object(ObjectRef obj);
 
  public:
   Bucket(
@@ -279,9 +325,7 @@ class Bucket {
         store(_store),
         owner(_owner),
         info(_bucket_info),
-        attrs(_attrs) {
-    _refresh_objects();
-  }
+        attrs(_attrs) {}
 
   const RGWBucketInfo& get_info() const { return info; }
 
@@ -309,20 +353,21 @@ class Bucket {
 
   uint32_t get_flags() const { return info.flags; }
 
+ public:
+  /// Return object for key. Do everything necessary to retrieve or
+  // create this object including object version.
   ObjectRef get_or_create(const rgw_obj_key& key);
 
-  ObjectRef get(const std::string& name) {
-    auto it = objects.find(name);
-    if (it == objects.end()) {
-      throw UnknownObjectException();
-    }
-    return objects[name];
-  }
+  /// Get existing object by name. Throws if it doesn't exist.
+  ObjectRef get(const std::string& name);
+  /// Get copy of all objects
+  std::vector<ObjectRef> get_all();
 
-  void finish(const DoutPrefixProvider* dpp, const std::string& objname);
-
+  /// S3 delete object operation: delete version or create tombstone.
   void delete_object(ObjectRef objref, const rgw_obj_key& key);
 
+  /// Delete a non-existing object. Creates object with toumbstone
+  // version in database.
   std::string create_non_existing_object_delete_marker(const rgw_obj_key& key);
 
   MultipartUploadRef get_multipart(
@@ -339,7 +384,7 @@ class Bucket {
       return mp;
     }
 
-    ObjectRef obj = std::make_shared<Object>(oid);
+    ObjectRef obj = std::shared_ptr<Object>(Object::create_from_obj_key(oid));
     MultipartUploadRef mp =
         std::make_shared<MultipartUpload>(obj, upload_id, owner, mtime);
     multiparts[upload_id] = mp;
@@ -347,7 +392,6 @@ class Bucket {
   }
 
   void finish_multipart(const std::string& upload_id, ObjectRef objref) {
-    std::lock_guard l1(obj_map_lock);
     std::lock_guard l2(multipart_map_lock);
 
     auto it = multiparts.find(upload_id);
@@ -357,7 +401,6 @@ class Bucket {
     multiparts.erase(it);
 
     objref->metadata_finish(store);
-    _finish_object(objref);
   }
 
   std::string gen_multipart_upload_id() {
