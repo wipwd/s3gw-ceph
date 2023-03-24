@@ -470,23 +470,16 @@ TEST_F(TestSFSSQLiteVersionedObjects, Testobject_stateConversion) {
 
   auto ret_object = db_objects.get_versioned_object(db_object.id);
   ASSERT_TRUE(ret_object.has_value());
-  ASSERT_EQ(rgw::sal::ObjectState::WRITING, ret_object->object_state);
+  ASSERT_EQ(rgw::sal::ObjectState::COMMITTED, ret_object->object_state);
 
   db_object.object_state = 2;
   storage.replace(db_object);
 
   ret_object = db_objects.get_versioned_object(db_object.id);
   ASSERT_TRUE(ret_object.has_value());
-  ASSERT_EQ(rgw::sal::ObjectState::COMMITTED, ret_object->object_state);
-
-  db_object.object_state = 3;
-  storage.replace(db_object);
-
-  ret_object = db_objects.get_versioned_object(db_object.id);
-  ASSERT_TRUE(ret_object.has_value());
   ASSERT_EQ(rgw::sal::ObjectState::LOCKED, ret_object->object_state);
 
-  db_object.object_state = 4;
+  db_object.object_state = 3;
   storage.replace(db_object);
 
   ret_object = db_objects.get_versioned_object(db_object.id);
@@ -684,7 +677,7 @@ TEST_F(TestSFSSQLiteVersionedObjects, TestUpdate) {
   ASSERT_TRUE(ret_ver_object.has_value());
   compareVersionedObjects(object, *ret_ver_object);
 
-  object.object_state = rgw::sal::ObjectState::WRITING;
+  object.object_state = rgw::sal::ObjectState::OPEN;
   db_versioned_objects->store_versioned_object(object);
 
   ret_ver_object = db_versioned_objects->get_versioned_object(1);
