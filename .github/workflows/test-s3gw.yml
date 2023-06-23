@@ -8,7 +8,7 @@ on:
 
   push:
     branches:
-      ci/s3tests-results
+      ci/test-s3-cache
     tags:
       - "s3gw-v*"
 
@@ -31,7 +31,8 @@ jobs:
       - name: Checkout s3gw
         uses: actions/checkout@v3
         with:
-          repository: aquarist-labs/s3gw
+          repository: m-ildefons/s3gw
+          ref: ci/sccache
           path: s3gw
           submodules: false
 
@@ -57,6 +58,20 @@ jobs:
         with:
           python-version: 3.8
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+
+      - name: Set up Docker Context
+        run: |
+          docker context create builder
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+        with:
+          endpoint: builder
+          driver: docker-container
+          driver-opts: image=moby/buildkit:master
+
       - name: Install Dependencies
         run: |
           YQ_GH_URL=https://github.com/mikefarah/yq/releases/download
@@ -67,7 +82,19 @@ jobs:
           sudo apt-get install -y \
             bc \
             wget \
-            s3cmd
+            s3cmd \
+            tar
+
+          cat > "ceph/s3cmd.cfg" <<EOF
+          [default]
+          access_key = ${{ secrets.S3_ACCESS_KEY }}
+          secret_key = ${{ secrets.S3_SECRET_KEY }}
+          host_base = ${{ secrets.S3_HOSTNAME }}
+          host_bucket = %{bucket}.%{url}
+          signurl_use_https = False
+          use_https = False
+          signature_v2 = True
+          EOF
 
           # Unfortunately, since yq is only available through snap on Ubuntu and
           # that doesn't work in docker containers (at least not out of the
@@ -83,15 +110,14 @@ jobs:
 
       - name: Build Unittests
         run: |
-          docker build \
-            --build-arg CMAKE_BUILD_TYPE=Debug \
-            --build-arg NPROC=16 \
+          docker buildx build \
+            --build-arg CMAKE_BUILD_TYPE="$CMAKE_BUILD_TYPE" \
+            --build-arg NPROC="$NPROC" \
             --file s3gw/Dockerfile \
             --tag s3gw-unittests \
             --target s3gw-unittests \
+            --load \
             .
-
-          docker images
 
       - name: Run Unittests
         run: |
@@ -99,14 +125,13 @@ jobs:
 
       - name: Build s3gw Container Image
         run: |
-          docker build \
+          docker buildx build \
             --build-arg CMAKE_BUILD_TYPE=Debug \
             --build-arg NPROC=16 \
             --file s3gw/Dockerfile \
             --tag s3gw \
+            --load \
             .
-
-          docker images
 
       - name: Run Integration tests
         run: |
