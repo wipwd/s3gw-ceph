@@ -16,10 +16,12 @@
 #include <sqlite3.h>
 
 #include <filesystem>
+#include <ios>
 #include <memory>
 
 #include "buckets/bucket_definitions.h"
 #include "common/ceph_mutex.h"
+#include "common/dout.h"
 #include "lifecycle/lifecycle_definitions.h"
 #include "objects/object_definitions.h"
 #include "sqlite_orm.h"
@@ -202,13 +204,52 @@ inline auto _make_storage(const std::string& path) {
 
 using Storage = decltype(_make_storage(""));
 
+static void sqlite_error_callback(void* ctx, int error_code, const char* msg) {
+  const auto cct = static_cast<CephContext*>(ctx);
+  lderr(cct) << "[SQLITE] (" << error_code << ") " << msg << dendl;
+}
+
+static int sqlite_profile_callback(
+    unsigned int reason, void* ctx, void* vstatement, void* runtime_ns
+) {
+  const auto cct = static_cast<CephContext*>(ctx);
+
+  if (reason == SQLITE_TRACE_PROFILE) {
+    const int64_t runtime = *static_cast<int64_t*>(runtime_ns) / 1000 / 1000;
+    sqlite3_stmt* statement = static_cast<sqlite3_stmt*>(vstatement);
+    const std::unique_ptr<char, void (*)(char*)> sql(
+        sqlite3_expanded_sql(statement),
+        [](char* p) { sqlite3_free(static_cast<void*>(p)); }
+    );
+    const sqlite3* db = sqlite3_db_handle(statement);
+
+    if (sql) {
+      lderr(cct) << "[SQLITE PROFILE] " << std::hex << db << " " << runtime
+                 << "ms "
+                 << "\"" << sql.get() << "\"" << dendl;
+    } else {
+      lderr(cct) << "[SQLITE PROFILE] " << std::hex << db << " " << runtime
+                 << "ms "
+                 << "\"" << sqlite3_sql(statement) << "\"" << dendl;
+    }
+  }
+
+  return 0;
+}
+
 class DBConn {
   Storage storage;
 
  public:
   sqlite3* sqlite_db;
+  CephContext* const cct;
+  const bool profile_enabled;
 
-  DBConn(CephContext* cct) : storage(_make_storage(getDBPath(cct))) {
+  DBConn(CephContext* _cct)
+      : storage(_make_storage(getDBPath(_cct))),
+        cct(_cct),
+        profile_enabled(_cct->_conf.get_val<bool>("rgw_sfs_sqlite_profile")) {
+    sqlite3_config(SQLITE_CONFIG_LOG, &sqlite_error_callback, cct);
     storage.on_open = [this](sqlite3* db) {
       sqlite_db = db;
 
@@ -216,10 +257,17 @@ class DBConn {
       sqlite3_busy_timeout(db, 10000);
       sqlite3_exec(
           db,
-          "PRAGMA journal_mode=WAL;PRAGMA synchronous=normal;PRAGMA temp_store "
-          "= memory;PRAGMA mmap_size = 30000000000;",
+          "PRAGMA journal_mode=WAL;"
+          "PRAGMA synchronous=normal;"
+          "PRAGMA temp_store = memory;"
+          "PRAGMA mmap_size = 30000000000;",
           0, 0, 0
       );
+      if (this->profile_enabled) {
+        sqlite3_trace_v2(
+            db, SQLITE_TRACE_PROFILE, &sqlite_profile_callback, this->cct
+        );
+      }
     };
     storage.open_forever();
     storage.busy_timeout(5000);
