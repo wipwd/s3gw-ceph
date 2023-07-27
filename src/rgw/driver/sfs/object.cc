@@ -377,7 +377,7 @@ std::unique_ptr<MPSerializer> SFSObject::get_serializer(
     const DoutPrefixProvider* dpp, const std::string& lock_name
 ) {
   lsfs_dout(dpp, 10) << "lock name: " << lock_name << dendl;
-  return std::make_unique<SFSMultipartSerializer>();
+  return std::make_unique<sfs::SFSMultipartSerializer>();
 }
 
 int SFSObject::transition(
@@ -476,7 +476,9 @@ void SFSObject::_refresh_meta_from_object(
   // fill values from objref
   set_obj_size(objref->get_meta().size);
   set_attrs(objref->get_attrs());
+  state.accounted_size = objref->get_meta().size;
   state.mtime = objref->get_meta().mtime;
+  state.exists = true;
   if (update_version_id_from_metadata) {
     set_instance(objref->instance);
   }

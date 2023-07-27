@@ -20,6 +20,7 @@
 #include <memory>
 
 #include "buckets/bucket_definitions.h"
+#include "buckets/multipart_definitions.h"
 #include "common/ceph_mutex.h"
 #include "common/dout.h"
 #include "lifecycle/lifecycle_definitions.h"
@@ -31,7 +32,7 @@
 namespace rgw::sal::sfs::sqlite {
 
 /// current db version.
-constexpr int SFS_METADATA_VERSION = 1;
+constexpr int SFS_METADATA_VERSION = 3;
 /// minimum required version to upgrade db.
 constexpr int SFS_METADATA_MIN_VERSION = 1;
 
@@ -44,6 +45,8 @@ constexpr std::string_view VERSIONED_OBJECTS_TABLE = "versioned_objects";
 constexpr std::string_view ACCESS_KEYS = "access_keys";
 constexpr std::string_view LC_HEAD_TABLE = "lc_head";
 constexpr std::string_view LC_ENTRIES_TABLE = "lc_entries";
+constexpr std::string_view MULTIPARTS_TABLE = "multiparts";
+constexpr std::string_view MULTIPARTS_PARTS_TABLE = "multiparts_parts";
 
 class sqlite_sync_exception : public std::exception {
   std::string _message;
@@ -198,6 +201,56 @@ inline auto _make_storage(const std::string& path) {
           sqlite_orm::primary_key(
               &DBOPLCEntry::lc_index, &DBOPLCEntry::bucket_name
           )
+      ),
+      sqlite_orm::make_table(
+          std::string(MULTIPARTS_TABLE),
+          sqlite_orm::make_column(
+              "id", &DBMultipart::id, sqlite_orm::primary_key(),
+              sqlite_orm::autoincrement()
+          ),
+          sqlite_orm::make_column("bucket_id", &DBMultipart::bucket_id),
+          sqlite_orm::make_column("upload_id", &DBMultipart::upload_id),
+          sqlite_orm::make_column("state", &DBMultipart::state),
+          sqlite_orm::make_column(
+              "state_change_time", &DBMultipart::state_change_time
+          ),
+          sqlite_orm::make_column("object_name", &DBMultipart::object_name),
+          sqlite_orm::make_column("object_uuid", &DBMultipart::object_uuid),
+          sqlite_orm::make_column("meta_str", &DBMultipart::meta_str),
+          sqlite_orm::make_column("owner_id", &DBMultipart::owner_id),
+          sqlite_orm::make_column(
+              "owner_display_name", &DBMultipart::owner_display_name
+          ),
+          sqlite_orm::make_column("mtime", &DBMultipart::mtime),
+          sqlite_orm::make_column("attrs", &DBMultipart::attrs),
+          sqlite_orm::make_column(
+              "placement_name", &DBMultipart::placement_name
+          ),
+          sqlite_orm::make_column(
+              "placement_storage_class", &DBMultipart::placement_storage_class
+          ),
+          sqlite_orm::unique(&DBMultipart::upload_id),
+          sqlite_orm::unique(&DBMultipart::bucket_id, &DBMultipart::upload_id),
+          sqlite_orm::unique(&DBMultipart::object_uuid),
+          sqlite_orm::foreign_key(&DBMultipart::bucket_id)
+              .references(&DBBucket::bucket_id)
+      ),
+      sqlite_orm::make_table(
+          std::string(MULTIPARTS_PARTS_TABLE),
+          sqlite_orm::make_column(
+              "id", &DBMultipartPart::id, sqlite_orm::primary_key(),
+              sqlite_orm::autoincrement()
+          ),
+          sqlite_orm::make_column("upload_id", &DBMultipartPart::upload_id),
+          sqlite_orm::make_column("part_num", &DBMultipartPart::part_num),
+          sqlite_orm::make_column("size", &DBMultipartPart::size),
+          sqlite_orm::make_column("etag", &DBMultipartPart::etag),
+          sqlite_orm::make_column("mtime", &DBMultipartPart::mtime),
+          sqlite_orm::unique(
+              &DBMultipartPart::upload_id, &DBMultipartPart::part_num
+          ),
+          sqlite_orm::foreign_key(&DBMultipartPart::upload_id)
+              .references(&DBMultipart::upload_id)
       )
   );
 }

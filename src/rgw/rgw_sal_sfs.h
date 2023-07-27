@@ -38,9 +38,10 @@
 #include "rgw_sal.h"
 #include "rgw_status_page.h"
 
-#define lsfs_dout(_dpp, _lvl)                                               \
-  ldpp_dout(_dpp, _lvl) << "> " << this->get_cls_name() << "::" << __func__ \
-                        << " "
+#define lsfs_dout_for(_dpp, _lvl, _whom) \
+  ldpp_dout(_dpp, _lvl) << "> " << _whom << "::" << __func__ << " "
+
+#define lsfs_dout(_dpp, _lvl) lsfs_dout_for(_dpp, _lvl, this->get_cls_name())
 
 namespace rgw::sal::sfs {
 class SFSGC;
@@ -89,7 +90,7 @@ class UnsupportedLuaManager : public StoreLuaManager {
   virtual int list_packages(
       const DoutPrefixProvider* dpp, optional_yield y,
       rgw::lua::packages_t& packages
-  ) {
+  ) override {
     return -ENOENT;
   }
 };
@@ -166,7 +167,7 @@ class SFStore : public StoreDriver {
    * The SAL layer will often call this function during its operation, setting
    * the bucket accordingly at some point.
    */
-  virtual std::unique_ptr<Object> get_object(const rgw_obj_key& k) {
+  virtual std::unique_ptr<Object> get_object(const rgw_obj_key& k) override {
     return std::make_unique<SFSObject>(this, k);
   }
 
