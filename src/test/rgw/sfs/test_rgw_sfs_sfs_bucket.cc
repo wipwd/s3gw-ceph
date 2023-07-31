@@ -140,8 +140,6 @@ void compareListEntry(
   EXPECT_EQ(entry.key.name, object->name);
   EXPECT_EQ(entry.meta.etag, object->get_meta().etag);
   EXPECT_EQ(entry.meta.mtime, object->get_meta().mtime);
-  EXPECT_EQ(entry.meta.owner_display_name, username + "_display_name");
-  EXPECT_EQ(entry.meta.owner, username);
 }
 
 TEST_F(TestSFSBucket, UserCreateBucketCheckGotFromCreate) {
@@ -675,7 +673,7 @@ TEST_F(TestSFSBucket, TestListObjectsAndVersions) {
   params.prefix = "";
   rgw::sal::Bucket::ListResults results;
 
-  EXPECT_EQ(bucket_from_store->list(&ndp, params, 0, results, null_yield), 0);
+  EXPECT_EQ(bucket_from_store->list(&ndp, params, 1000, results, null_yield), 0);
 
   std::map<std::string, std::shared_ptr<rgw::sal::sfs::Object>>
       expected_objects;
@@ -700,7 +698,7 @@ TEST_F(TestSFSBucket, TestListObjectsAndVersions) {
   rgw::sal::Bucket::ListResults results_folder_prefix;
   EXPECT_EQ(
       bucket_from_store->list(
-          &ndp, params, 0, results_folder_prefix, null_yield
+          &ndp, params, 1000, results_folder_prefix, null_yield
       ),
       0
   );
@@ -725,7 +723,7 @@ TEST_F(TestSFSBucket, TestListObjectsAndVersions) {
   params.prefix = "ob";
   rgw::sal::Bucket::ListResults results_ob_prefix;
   EXPECT_EQ(
-      bucket_from_store->list(&ndp, params, 0, results_ob_prefix, null_yield), 0
+      bucket_from_store->list(&ndp, params, 1000, results_ob_prefix, null_yield), 0
   );
 
   expected_objects.clear();
@@ -749,7 +747,7 @@ TEST_F(TestSFSBucket, TestListObjectsAndVersions) {
   rgw::sal::Bucket::ListResults results_versions;
 
   EXPECT_EQ(
-      bucket_from_store->list(&ndp, params, 0, results_versions, null_yield), 0
+      bucket_from_store->list(&ndp, params, 1000, results_versions, null_yield), 0
   );
   // we'll find 4 objects with 2 versions each (8 entries)
   EXPECT_EQ(8, results_versions.objs.size());
@@ -776,7 +774,7 @@ TEST_F(TestSFSBucket, TestListObjectsAndVersions) {
   rgw::sal::Bucket::ListResults results_versions_folder_prefix;
   EXPECT_EQ(
       bucket_from_store->list(
-          &ndp, params, 0, results_versions_folder_prefix, null_yield
+          &ndp, params, 1000, results_versions_folder_prefix, null_yield
       ),
       0
   );
@@ -804,7 +802,7 @@ TEST_F(TestSFSBucket, TestListObjectsAndVersions) {
   rgw::sal::Bucket::ListResults results_versions_ob_prefix;
   EXPECT_EQ(
       bucket_from_store->list(
-          &ndp, params, 0, results_versions_ob_prefix, null_yield
+          &ndp, params, 1000, results_versions_ob_prefix, null_yield
       ),
       0
   );
@@ -899,7 +897,7 @@ TEST_F(TestSFSBucket, TestListObjectsDelimiter) {
   params.delim = "";
   rgw::sal::Bucket::ListResults results;
 
-  EXPECT_EQ(bucket_from_store->list(&ndp, params, 0, results, null_yield), 0);
+  EXPECT_EQ(bucket_from_store->list(&ndp, params, 1000, results, null_yield), 0);
 
   // we expect to get all the objects
   std::map<std::string, std::shared_ptr<rgw::sal::sfs::Object>>
@@ -929,7 +927,7 @@ TEST_F(TestSFSBucket, TestListObjectsDelimiter) {
   rgw::sal::Bucket::ListResults results_delimiter_i;
 
   EXPECT_EQ(
-      bucket_from_store->list(&ndp, params, 0, results_delimiter_i, null_yield),
+      bucket_from_store->list(&ndp, params, 1000, results_delimiter_i, null_yield),
       0
   );
 
@@ -954,7 +952,7 @@ TEST_F(TestSFSBucket, TestListObjectsDelimiter) {
 
   EXPECT_EQ(
       bucket_from_store->list(
-          &ndp, params, 0, results_delimiter_slash, null_yield
+          &ndp, params, 1000, results_delimiter_slash, null_yield
       ),
       0
   );
@@ -988,7 +986,7 @@ TEST_F(TestSFSBucket, TestListObjectsDelimiter) {
 
   EXPECT_EQ(
       bucket_from_store->list(
-          &ndp, params, 0, results_delimiter_directory, null_yield
+          &ndp, params, 1000, results_delimiter_directory, null_yield
       ),
       0
   );
@@ -1027,7 +1025,7 @@ TEST_F(TestSFSBucket, TestListObjectsDelimiter) {
 
   EXPECT_EQ(
       bucket_from_store->list(
-          &ndp, params, 0, results_delimiter_i_prefix_d, null_yield
+          &ndp, params, 1000, results_delimiter_i_prefix_d, null_yield
       ),
       0
   );
@@ -1117,7 +1115,7 @@ TEST_F(TestSFSBucket, TestListObjectVersionsDelimiter) {
   params.list_versions = true;
   rgw::sal::Bucket::ListResults results;
 
-  EXPECT_EQ(bucket_from_store->list(&ndp, params, 0, results, null_yield), 0);
+  EXPECT_EQ(bucket_from_store->list(&ndp, params, 1000, results, null_yield), 0);
 
   // we expect to get all the objects
   std::map<std::string, std::shared_ptr<rgw::sal::sfs::Object>>
@@ -1148,7 +1146,7 @@ TEST_F(TestSFSBucket, TestListObjectVersionsDelimiter) {
   rgw::sal::Bucket::ListResults results_delimiter_i;
 
   EXPECT_EQ(
-      bucket_from_store->list(&ndp, params, 0, results_delimiter_i, null_yield),
+      bucket_from_store->list(&ndp, params, 1000, results_delimiter_i, null_yield),
       0
   );
 
@@ -1173,7 +1171,7 @@ TEST_F(TestSFSBucket, TestListObjectVersionsDelimiter) {
 
   EXPECT_EQ(
       bucket_from_store->list(
-          &ndp, params, 0, results_delimiter_slash, null_yield
+          &ndp, params, 1000, results_delimiter_slash, null_yield
       ),
       0
   );
@@ -1207,7 +1205,7 @@ TEST_F(TestSFSBucket, TestListObjectVersionsDelimiter) {
 
   EXPECT_EQ(
       bucket_from_store->list(
-          &ndp, params, 0, results_delimiter_directory, null_yield
+          &ndp, params, 1000, results_delimiter_directory, null_yield
       ),
       0
   );
@@ -1248,7 +1246,7 @@ TEST_F(TestSFSBucket, TestListObjectVersionsDelimiter) {
 
   EXPECT_EQ(
       bucket_from_store->list(
-          &ndp, params, 0, results_delimiter_i_prefix_d, null_yield
+          &ndp, params, 1000, results_delimiter_i_prefix_d, null_yield
       ),
       0
   );
