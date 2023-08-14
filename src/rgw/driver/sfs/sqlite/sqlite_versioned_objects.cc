@@ -115,6 +115,7 @@ bool SQLiteVersionedObjects::store_versioned_object_if_state(
 ) const {
   auto storage = conn->get_storage();
   auto transaction = storage.transaction_guard();
+  transaction.commit_on_destroy = true;
   storage.update_all(
       set(c(&DBVersionedObject::object_id) = object.object_id,
           c(&DBVersionedObject::checksum) = object.checksum,
@@ -133,40 +134,15 @@ bool SQLiteVersionedObjects::store_versioned_object_if_state(
           in(&DBVersionedObject::object_state, allowed_states)
       )
   );
-  const bool result = storage.changes() > 0;
-  transaction.commit();
-  return result;
-}
-
-void SQLiteVersionedObjects::store_versioned_object_delete_rest_transact(
-    const DBVersionedObject& object
-) const {
-  try {
-    auto storage = conn->get_storage();
-    auto transaction = storage.transaction_guard();
-    storage.update(object);
-    // soft delete the rest of this object
-    storage.update_all(
-        set(c(&DBVersionedObject::object_state) = ObjectState::DELETED),
-        where(
-            is_equal(&DBVersionedObject::object_id, object.object_id) and
-            is_not_equal(&DBVersionedObject::id, object.id)
-        )
-    );
-    transaction.commit();
-  } catch (const std::system_error& e) {
-    // TODO(https://github.com/aquarist-labs/s3gw/issues/563) error handling
-    // throw exception (will be caught later in the sfs logic)
-    throw(e);
-  }
+  return storage.changes() > 0;
 }
 
 bool SQLiteVersionedObjects::
     store_versioned_object_delete_committed_transact_if_state(
         const DBVersionedObject& object, std::vector<ObjectState> allowed_states
     ) const {
-  try {
-    auto storage = conn->get_storage();
+  auto storage = conn->get_storage();
+  RetrySQLite<bool> retry([&]() {
     auto transaction = storage.transaction_guard();
     storage.update_all(
         set(c(&DBVersionedObject::object_id) = object.object_id,
@@ -204,12 +180,10 @@ bool SQLiteVersionedObjects::
         )
     );
     transaction.commit();
-  } catch (const std::system_error& e) {
-    // TODO(https://github.com/aquarist-labs/s3gw/issues/563) error handling
-    // throw exception (will be caught later in the sfs logic)
-    return false;
-  }
-  return true;
+    return true;
+  });
+  const auto result = retry.run();
+  return result.has_value() ? result.value() : false;
 }
 
 void SQLiteVersionedObjects::remove_versioned_object(uint id) const {
@@ -315,7 +289,8 @@ SQLiteVersionedObjects::get_last_versioned_object(
 }
 
 std::optional<DBVersionedObject>
-SQLiteVersionedObjects::delete_version_and_get_previous_transact(uint id) {
+SQLiteVersionedObjects::delete_version_and_get_previous_transact(uint id
+) const {
   try {
     auto storage = conn->get_storage();
     auto transaction = storage.transaction_guard();

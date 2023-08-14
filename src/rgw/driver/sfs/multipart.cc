@@ -70,12 +70,12 @@ std::unique_ptr<rgw::sal::Object> SFSMultipartUploadV2::get_meta_obj() {
 }
 
 int SFSMultipartUploadV2::init(
-    const DoutPrefixProvider* dpp, optional_yield y, ACLOwner& owner,
+    const DoutPrefixProvider* dpp, optional_yield y, ACLOwner& acl_owner,
     rgw_placement_rule& dest_placement, rgw::sal::Attrs& attrs
 ) {
   lsfs_dout(dpp, 10) << "upload_id: " << upload_id << ", oid: " << get_key()
                      << ", meta: " << meta_str
-                     << ", owner: " << owner.get_display_name()
+                     << ", owner: " << acl_owner.get_display_name()
                      << ", attrs: " << attrs << dendl;
 
   sfs::sqlite::SQLiteMultipart mpdb(store->db_conn);
@@ -97,6 +97,7 @@ int SFSMultipartUploadV2::init(
   auto now = ceph::real_time::clock::now();
 
   sfs::sqlite::DBOPMultipart mpop{
+      .id = -1 /* ignored by insert */,
       .bucket_id = bucket->get_bucket_id(),
       .upload_id = upload_id,
       .state = sfs::MultipartState::INIT,
@@ -104,7 +105,7 @@ int SFSMultipartUploadV2::init(
       .object_name = oid,
       .object_uuid = uuid,
       .meta_str = meta_str,
-      .owner_id = owner,
+      .owner_id = acl_owner,
       .mtime = now,
       .attrs = attrs,
       .placement = dest_placement,
@@ -125,7 +126,7 @@ int SFSMultipartUploadV2::init(
   lsfs_dout(dpp, 10)
       << fmt::format(
              "created multipart upload_id: {}, oid: {}, owner: {}", upload_id,
-             get_key(), owner.get_display_name()
+             get_key(), acl_owner.get_display_name()
          )
       << dendl;
   lsfs_dout(dpp, 10) << "attrs: " << attrs << dendl;
@@ -179,14 +180,14 @@ int SFSMultipartUploadV2::complete(
     std::map<int, std::string>& part_etags,
     std::list<rgw_obj_index_key>& remove_objs, uint64_t& accounted_size,
     bool& compressed, RGWCompressionInfo& cs_info, off_t& ofs, std::string& tag,
-    ACLOwner& owner, uint64_t olh_epoch, rgw::sal::Object* target_obj
+    ACLOwner& acl_owner, uint64_t olh_epoch, rgw::sal::Object* target_obj
 ) {
   lsfs_dout(dpp, 10) << fmt::format(
                             "upload_id: {}, accounted_size: {}, tag: {}, "
                             "owner: {}, olh_epoch: {}"
                             ", target_obj: {}",
                             upload_id, accounted_size, tag,
-                            owner.get_display_name(), olh_epoch,
+                            acl_owner.get_display_name(), olh_epoch,
                             target_obj->get_key()
                         )
                      << dendl;
@@ -212,8 +213,8 @@ int SFSMultipartUploadV2::complete(
     return 0;
   }
 
-  auto parts = mpdb.get_parts(upload_id);
-  if (parts.size() != part_etags.size()) {
+  auto current_parts = mpdb.get_parts(upload_id);
+  if (current_parts.size() != part_etags.size()) {
     return -ERR_INVALID_PART;
   }
 
@@ -231,7 +232,7 @@ int SFSMultipartUploadV2::complete(
 
   std::map<int, sqlite::DBMultipartPart> to_complete;
   std::map<int, sqlite::DBMultipartPart> parts_map;
-  for (const auto& p : parts) {
+  for (const auto& p : current_parts) {
     parts_map[p.part_num] = p;
   }
 
@@ -465,7 +466,8 @@ int SFSMultipartUploadV2::complete(
   objref->update_meta(
       {.size = accounted_bytes,
        .etag = etag,
-       .mtime = ceph::real_time::clock::now()}
+       .mtime = ceph::real_time::clock::now(),
+       .delete_at = ceph::real_time()}
   );
   try {
     objref->metadata_finish(store, bucketref->get_info().versioning_enabled());
@@ -530,8 +532,9 @@ int SFSMultipartUploadV2::get_info(
 
 std::unique_ptr<Writer> SFSMultipartUploadV2::get_writer(
     const DoutPrefixProvider* dpp, optional_yield y, rgw::sal::Object* head_obj,
-    const rgw_user& owner, const rgw_placement_rule* ptail_placement_rule,
-    uint64_t part_num, const std::string& part_num_str
+    const rgw_user& writer_owner,
+    const rgw_placement_rule* ptail_placement_rule, uint64_t part_num,
+    const std::string& part_num_str
 ) {
   ceph_assert(part_num <= 10000);
   uint32_t pnum = static_cast<uint32_t>(part_num);
@@ -539,7 +542,7 @@ std::unique_ptr<Writer> SFSMultipartUploadV2::get_writer(
   lsfs_dout(dpp, 10)
       << fmt::format(
              "head_obj: {}, owner: {}, upload_id: {}, part_num: {}",
-             head_obj->get_key().name, owner.id, upload_id, pnum
+             head_obj->get_key().name, writer_owner.id, upload_id, pnum
          )
       << dendl;
 
