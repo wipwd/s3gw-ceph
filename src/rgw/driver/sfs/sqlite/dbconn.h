@@ -32,9 +32,9 @@
 namespace rgw::sal::sfs::sqlite {
 
 /// current db version.
-constexpr int SFS_METADATA_VERSION = 3;
+constexpr int SFS_METADATA_VERSION = 4;
 /// minimum required version to upgrade db.
-constexpr int SFS_METADATA_MIN_VERSION = 1;
+constexpr int SFS_METADATA_MIN_VERSION = 4;
 
 constexpr std::string_view SCHEMA_DB_NAME = "s3gw.db";
 
@@ -64,6 +64,9 @@ inline auto _make_storage(const std::string& path) {
       sqlite_orm::make_unique_index(
           "versioned_object_objid_vid_unique", &DBVersionedObject::object_id,
           &DBVersionedObject::version_id
+      ),
+      sqlite_orm::make_unique_index(
+          "object_bucketid_name", &DBObject::bucket_id, &DBObject::name
       ),
       sqlite_orm::make_index("bucket_ownerid_idx", &DBBucket::owner_id),
       sqlite_orm::make_index("bucket_name_idx", &DBBucket::bucket_name),
