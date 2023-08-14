@@ -60,7 +60,7 @@ bool SQLiteList::objects(
           greater_than(&DBObject::name, start_after_object_name) and
           like(&DBObject::name, prefix_to_like_expr(prefix))
       ),
-      group_by(&DBObject::name),
+      group_by(&DBVersionedObject::object_id),
       having(is_equal(
           sqlite_orm::max(&DBVersionedObject::version_type),
           VersionType::REGULAR
@@ -152,11 +152,11 @@ bool SQLiteList::versions(
       ),
       // Sort:
       // names a-Z
-      // first versions, then delete markers
+      // first delete markers, then versions - (See: LC CurrentExpiration)
       // newest to oldest version
       multi_order_by(
           order_by(&DBObject::name).asc(),
-          order_by(&DBVersionedObject::version_type).asc(),
+          order_by(&DBVersionedObject::version_type).desc(),
           order_by(&DBVersionedObject::commit_time).desc(),
           order_by(&DBVersionedObject::id).desc()
       ),
