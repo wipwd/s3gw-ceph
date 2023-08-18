@@ -50,8 +50,8 @@ std::optional<std::vector<DBOPMultipart>> SQLiteMultipart::list_multiparts(
 
 std::vector<DBOPMultipart> SQLiteMultipart::list_multiparts_by_bucket_id(
     const std::string& bucket_id, const std::string& prefix,
-    const std::string& marker, const std::string& delim, const int& max_uploads,
-    bool* is_truncated, bool get_all
+    const std::string& marker, const std::string& /*delim*/,
+    const int& max_uploads, bool* is_truncated, bool get_all
 ) const {
   std::vector<DBOPMultipart> entries;
   auto storage = conn->get_storage();

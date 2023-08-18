@@ -142,7 +142,7 @@ class Bucket {
 
  private:
   bool _undelete_object(
-      const Object& obj, const rgw_obj_key& key,
+      const rgw_obj_key& key,
       const sqlite::SQLiteVersionedObjects& sqlite_versioned_objects,
       const sqlite::DBVersionedObject& last_version
   ) const;
@@ -153,7 +153,6 @@ class Bucket {
   ) const;
 
   bool _delete_object_version(
-      const Object& obj, const rgw_obj_key& key,
       const sqlite::SQLiteVersionedObjects& sqlite_versioned_objects,
       const sqlite::DBVersionedObject& version
   ) const;
