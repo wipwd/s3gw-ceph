@@ -13,11 +13,18 @@
  */
 #include "bucket.h"
 
+#include <common/strtol.h>
+#include <driver/sfs/multipart_types.h>
+#include <driver/sfs/sqlite/buckets/multipart_definitions.h>
+#include <driver/sfs/sqlite/dbconn.h>
 #include <driver/sfs/sqlite/sqlite_buckets.h>
+#include <driver/sfs/sqlite/sqlite_multipart.h>
+#include <fmt/core.h>
 
 #include <cerrno>
 #include <fstream>
 #include <limits>
+#include <string>
 
 #include "common/Formatter.h"
 #include "driver/sfs/multipart.h"
@@ -89,24 +96,11 @@ std::unique_ptr<Object> SFSBucket::get_object(const rgw_obj_key& key) {
   }
 }
 
-/**
- * List objects in this bucket.
- */
-int SFSBucket::list(
-    const DoutPrefixProvider* dpp, ListParams& params, int max,
-    ListResults& results, optional_yield /*y*/
-) {
-  lsfs_dout(dpp, 10) << fmt::format(
-                            "listing bucket {} {}: max:{} params:", get_name(),
-                            params.list_versions ? "versions" : "objects", max
-                        )
-                     << params << dendl;
+int SFSBucket::verify_list_params(
+    const DoutPrefixProvider* dpp, const ListParams& params, int max
+) const {
   if (max < 0) {
     return -EINVAL;
-  }
-  if (max == 0) {
-    results.is_truncated = false;
-    return 0;
   }
   if (params.allow_unordered) {
     // allow unordered is a ceph extension intended to improve performance
@@ -127,13 +121,18 @@ int SFSBucket::list(
                       << get_name() << dendl;
     return -ENOTSUP;
   }
-  if (!params.ns.empty()) {
-    // TODO(https://github.com/aquarist-labs/s3gw/issues/642)
+  if (!params.ns.empty() && params.ns != RGW_OBJ_NS_MULTIPART) {
     return -ENOTSUP;
   }
-  if (params.access_list_filter) {
-    // TODO(https://github.com/aquarist-labs/s3gw/issues/642)
-    return -ENOTSUP;
+  if (params.ns == RGW_OBJ_NS_MULTIPART) {
+    if (params.list_versions) {
+      return -EINVAL;
+    }
+  }
+  if (params.ns.empty()) {
+    if (params.access_list_filter) {
+      return -ENOTSUP;
+    }
   }
   if (params.force_check_filter) {
     // RADOS extension. forced filter by func()
@@ -142,6 +141,61 @@ int SFSBucket::list(
   if (params.shard_id != RGW_NO_SHARD) {
     // we don't support sharding
     return -ENOTSUP;
+  }
+  return 0;
+}
+
+/**
+ * List objects in this bucket.
+ */
+int SFSBucket::list(
+    const DoutPrefixProvider* dpp, ListParams& params, int max,
+    ListResults& results, optional_yield /* y */
+) {
+  lsfs_dout(dpp, 10)
+      << fmt::format(
+             "listing bucket {} {} {}: max:{} params:", get_name(),
+             params.ns == RGW_OBJ_NS_MULTIPART ? "multipart" : "",
+             params.list_versions ? "versions" : "objects", max
+         )
+      << params << dendl;
+
+  const int list_params_ok = verify_list_params(dpp, params, max);
+  if (list_params_ok < 0) {
+    return list_params_ok;
+  }
+  if (max == 0) {
+    results.is_truncated = false;
+    return 0;
+  }
+
+  // LC: Like list_multiparts, but returns (1) identifier + (2) mtime to
+  // (1) find the entry via get_multipart_upload, (2) LC expire
+  if (params.ns == RGW_OBJ_NS_MULTIPART) {
+    // Ignore params.access_list_filter. A filter for multipart "meta"
+    // objects that SFS doesn't have.
+    sfs::sqlite::SQLiteMultipart multipart(store->db_conn);
+    std::vector<sfs::sqlite::DBOPMultipart> multiparts =
+        multipart.list_multiparts_by_bucket_id(
+            get_bucket_id(), params.prefix, params.marker.name, "", max,
+            &results.is_truncated, false
+        );
+    for (const auto& mp : multiparts) {
+      rgw_bucket_dir_entry e;
+      e.key.name = std::to_string(mp.id);
+      e.meta.mtime = mp.mtime;
+      results.objs.emplace_back(e);
+    }
+    lsfs_dout(dpp, 10) << fmt::format(
+                              "success (prefix:{}, start_after:{}, "
+                              "max:{}). #objs_returned:{} "
+                              "next:{} have_more:{}",
+                              params.prefix, params.marker.name, max,
+                              params.delim, results.objs.size(),
+                              results.next_marker, results.is_truncated
+                          )
+                       << dendl;
+    return 0;
   }
 
   sfs::sqlite::SQLiteList list(store->db_conn);
@@ -377,6 +431,27 @@ int SFSBucket::merge_and_store_attrs(
   return 0;
 }
 
+// try_resolve_mp_from_oid tries to parse an integer id from oid to
+// find an MP upload, returning object_name and upload_id
+static bool try_resolve_mp_from_oid(
+    sfs::sqlite::DBConnRef dbconn, const std::string& oid,
+    std::string& out_object_name, std::string& out_upload_id
+) {
+  sfs::sqlite::SQLiteMultipart mpdb(dbconn);
+  std::string err;
+  const int id = strict_strtol(oid, 10, &err);
+  if ((id == 0) && !err.empty()) {
+    return false;
+  }
+  std::optional<sfs::sqlite::DBOPMultipart> maybe_mp = mpdb.get_multipart(id);
+  if (!maybe_mp.has_value()) {
+    return false;
+  }
+  out_object_name = maybe_mp->object_name;
+  out_upload_id = maybe_mp->upload_id;
+  return true;
+}
+
 std::unique_ptr<MultipartUpload> SFSBucket::get_multipart_upload(
     const std::string& with_oid, std::optional<std::string> with_upload_id,
     ACLOwner with_owner, ceph::real_time with_mtime
@@ -385,14 +460,33 @@ std::unique_ptr<MultipartUpload> SFSBucket::get_multipart_upload(
       << "bucket::" << __func__ << ": oid: " << with_oid
       << ", upload id: " << with_upload_id << dendl;
 
-  std::string id = with_upload_id.value_or("");
-  if (id.empty()) {
-    id = bucket->gen_multipart_upload_id();
+  std::string next_oid(with_oid);
+  std::string next_upload_id;
+  // LC calls this to mp.abort() the resulting MultipartUpload
+  // `with_oid` from bucket->list(ns=multipart) and `with_upload_id`
+  // == nullopt. To _uniquily_ identify MPs we interpret `oid` as an
+  // ID into the MP table and resolve that to a upload id here.
+  if (!with_upload_id.has_value() &&
+      try_resolve_mp_from_oid(
+          store->db_conn, with_oid, next_oid, next_upload_id
+      )) {
+    ldout(store->ceph_context(), 20)
+        << fmt::format(
+               "called without upload_id. resolved oid {} to MP oid:{} "
+               "upload:{}",
+               with_oid, next_oid, next_upload_id
+           )
+        << dendl;
+  } else {
+    next_upload_id = with_upload_id.value_or("");
   }
-  // auto mp = bucket->get_multipart(id, oid, owner, mtime);
-  // return std::make_unique<sfs::SFSMultipartUpload>(store, this, bucket, mp);
+  if (next_upload_id.empty()) {
+    next_upload_id = bucket->gen_multipart_upload_id();
+  }
+  ceph_assert(!next_upload_id.empty());
+  ceph_assert(!next_oid.empty());
   return std::make_unique<sfs::SFSMultipartUploadV2>(
-      store, this, bucket, id, with_oid, with_owner, with_mtime
+      store, this, bucket, next_upload_id, next_oid, with_owner, with_mtime
   );
 }
 
