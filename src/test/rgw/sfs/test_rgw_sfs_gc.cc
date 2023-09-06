@@ -23,12 +23,12 @@
 #include "rgw/driver/sfs/sqlite/sqlite_buckets.h"
 #include "rgw/driver/sfs/sqlite/sqlite_users.h"
 #include "rgw/driver/sfs/uuid_path.h"
+#include "rgw/rgw_perf_counters.h"
 #include "rgw/rgw_sal_sfs.h"
 
 using namespace rgw::sal::sfs::sqlite;
 using namespace std::this_thread;
 using namespace std::chrono_literals;
-using std::chrono::system_clock;
 
 namespace fs = std::filesystem;
 const static std::string TEST_DIR = "rgw_sfs_tests";
@@ -36,9 +36,15 @@ const static std::string TEST_USERNAME = "test_user";
 
 class TestSFSGC : public ::testing::Test {
  protected:
+  const std::unique_ptr<CephContext> cct =
+      std::unique_ptr<CephContext>(new CephContext(CEPH_ENTITY_TYPE_ANY));
+
   void SetUp() override {
     fs::current_path(fs::temp_directory_path());
     fs::create_directory(TEST_DIR);
+    cct->_conf.set_val("rgw_sfs_data_path", getTestDir());
+    cct->_log->start();
+    rgw_perf_start(cct.get());
   }
 
   void TearDown() override {
@@ -256,15 +262,13 @@ class TestSFSGC : public ::testing::Test {
 };
 
 TEST_F(TestSFSGC, TestDeletedBuckets) {
-  auto ceph_context = std::make_shared<CephContext>(CEPH_ENTITY_TYPE_CLIENT);
-  ceph_context->_conf.set_val("rgw_sfs_data_path", getTestDir());
-  auto store = new rgw::sal::SFStore(ceph_context.get(), getTestDir());
+  auto store = new rgw::sal::SFStore(cct.get(), getTestDir());
   auto gc = store->gc;
   gc->suspend();  // start suspended so we have control over processing
 
-  NoDoutPrefix ndp(ceph_context.get(), 1);
+  NoDoutPrefix ndp(cct.get(), 1);
   RGWEnv env;
-  env.init(ceph_context.get());
+  env.init(cct.get());
 
   // create the test user
   createTestUser(store->db_conn);
@@ -325,21 +329,19 @@ TEST_F(TestSFSGC, TestDeletedBuckets) {
 }
 
 TEST_F(TestSFSGC, TestDeletedBucketsWithMultiparts) {
-  auto ceph_context = std::make_shared<CephContext>(CEPH_ENTITY_TYPE_CLIENT);
-  ceph_context->_conf.set_val("rgw_sfs_data_path", getTestDir());
   uint MAX_OBJECTS_ITERATION = 1;
-  ceph_context->_conf.set_val(
+  cct->_conf.set_val(
       "rgw_sfs_gc_max_objects_per_iteration",
       std::to_string(MAX_OBJECTS_ITERATION)
   );
-  auto store = new rgw::sal::SFStore(ceph_context.get(), getTestDir());
+  auto store = new rgw::sal::SFStore(cct.get(), getTestDir());
   auto gc = store->gc;
   gc->initialize();
   gc->suspend();  // start suspended so we have control over processing
 
-  NoDoutPrefix ndp(ceph_context.get(), 1);
+  NoDoutPrefix ndp(cct.get(), 1);
   RGWEnv env;
-  env.init(ceph_context.get());
+  env.init(cct.get());
 
   // create the test user
   createTestUser(store->db_conn);
@@ -411,15 +413,13 @@ TEST_F(TestSFSGC, TestDeletedBucketsWithMultiparts) {
 }
 
 TEST_F(TestSFSGC, TestDeletedObjects) {
-  auto ceph_context = std::make_shared<CephContext>(CEPH_ENTITY_TYPE_CLIENT);
-  ceph_context->_conf.set_val("rgw_sfs_data_path", getTestDir());
-  auto store = new rgw::sal::SFStore(ceph_context.get(), getTestDir());
+  auto store = new rgw::sal::SFStore(cct.get(), getTestDir());
   auto gc = store->gc;
   gc->suspend();  // start suspended so we have control over processing
 
-  NoDoutPrefix ndp(ceph_context.get(), 1);
+  NoDoutPrefix ndp(cct.get(), 1);
   RGWEnv env;
-  env.init(ceph_context.get());
+  env.init(cct.get());
 
   // create the test user
   createTestUser(store->db_conn);
@@ -477,16 +477,14 @@ TEST_F(TestSFSGC, TestDeletedObjects) {
 }
 
 TEST_F(TestSFSGC, TestDeletedObjectsAndDeletedBuckets) {
-  auto ceph_context = std::make_shared<CephContext>(CEPH_ENTITY_TYPE_CLIENT);
-  ceph_context->_conf.set_val("rgw_sfs_data_path", getTestDir());
-  auto store = new rgw::sal::SFStore(ceph_context.get(), getTestDir());
+  auto store = new rgw::sal::SFStore(cct.get(), getTestDir());
   auto gc = store->gc;
   gc->initialize();
   gc->suspend();  // start suspended so we have control over processing
 
-  NoDoutPrefix ndp(ceph_context.get(), 1);
+  NoDoutPrefix ndp(cct.get(), 1);
   RGWEnv env;
-  env.init(ceph_context.get());
+  env.init(cct.get());
 
   // create the test user
   createTestUser(store->db_conn);
@@ -555,21 +553,19 @@ TEST_F(TestSFSGC, TestDeletedObjectsAndDeletedBuckets) {
 }
 
 TEST_F(TestSFSGC, TestDoneAndAbortedMultiparts) {
-  auto ceph_context = std::make_shared<CephContext>(CEPH_ENTITY_TYPE_CLIENT);
-  ceph_context->_conf.set_val("rgw_sfs_data_path", getTestDir());
   uint MAX_OBJECTS_ITERATION = 1;
-  ceph_context->_conf.set_val(
+  cct->_conf.set_val(
       "rgw_sfs_gc_max_objects_per_iteration",
       std::to_string(MAX_OBJECTS_ITERATION)
   );
-  auto store = new rgw::sal::SFStore(ceph_context.get(), getTestDir());
+  auto store = new rgw::sal::SFStore(cct.get(), getTestDir());
   auto gc = store->gc;
   gc->initialize();
   gc->suspend();  // start suspended so we have control over processing
 
-  NoDoutPrefix ndp(ceph_context.get(), 1);
+  NoDoutPrefix ndp(cct.get(), 1);
   RGWEnv env;
-  env.init(ceph_context.get());
+  env.init(cct.get());
 
   // create the test user
   createTestUser(store->db_conn);
