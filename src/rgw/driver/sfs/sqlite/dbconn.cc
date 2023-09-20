@@ -20,6 +20,8 @@
 
 #include "common/dout.h"
 
+#define dout_subsys ceph_subsys_rgw
+
 namespace fs = std::filesystem;
 namespace orm = sqlite_orm;
 
@@ -30,6 +32,128 @@ static std::string get_temporary_db_path(CephContext* ctt) {
   auto tmp_db_name = std::string(SCHEMA_DB_NAME) + "_tmp";
   auto db_path = std::filesystem::path(rgw_sfs_path) / std::string(tmp_db_name);
   return db_path.string();
+}
+
+static void sqlite_error_callback(void* ctx, int error_code, const char* msg) {
+  const auto cct = static_cast<CephContext*>(ctx);
+  lderr(cct) << "[SQLITE] (" << error_code << ") " << msg << dendl;
+}
+
+static int sqlite_wal_hook_callback(
+    void* ctx, sqlite3* db, const char* zDb, int frames
+) {
+  const auto cct = static_cast<CephContext*>(ctx);
+  if (frames <=
+      cct->_conf.get_val<int64_t>("rgw_sfs_wal_checkpoint_passive_frames")) {
+    // Don't checkpoint unless WAL > rgw_sfs_wal_checkpoint_passive_frames
+    // (1000, or ~4MB by default)
+    return SQLITE_OK;
+  }
+  int total_frames = 0;
+  int checkpointed_frames = 0;
+  int mode = SQLITE_CHECKPOINT_PASSIVE;
+  if (frames >
+      cct->_conf.get_val<int64_t>("rgw_sfs_wal_checkpoint_truncate_frames")) {
+    // Trunate if WAL > rgw_sfs_wal_checkpoint_truncate_frames
+    // (4000, or ~16MB by default)
+    mode = SQLITE_CHECKPOINT_TRUNCATE;
+  }
+  int rc = sqlite3_wal_checkpoint_v2(
+      db, zDb, mode, &total_frames, &checkpointed_frames
+  );
+  ldout(cct, 10) << "[SQLITE] WAL checkpoint ("
+                 << (mode == SQLITE_CHECKPOINT_PASSIVE ? "passive" : "truncate")
+                 << ") returned " << rc << " (" << sqlite3_errstr(rc)
+                 << "), total_frames=" << total_frames
+                 << ", checkpointed_frames=" << checkpointed_frames << dendl;
+  return SQLITE_OK;
+}
+
+static int sqlite_profile_callback(
+    unsigned int reason, void* ctx, void* vstatement, void* runtime_ptr
+) {
+  const auto cct = static_cast<CephContext*>(ctx);
+  const static std::chrono::milliseconds slowlog_time =
+      cct->_conf.get_val<std::chrono::milliseconds>(
+          "rgw_sfs_sqlite_profile_slowlog_time"
+      );
+
+  if (reason == SQLITE_TRACE_PROFILE) {
+    const uint64_t runtime_ns = *static_cast<uint64_t*>(runtime_ptr);
+    const int64_t runtime_ms = runtime_ns / 1000 / 1000;
+    sqlite3_stmt* statement = static_cast<sqlite3_stmt*>(vstatement);
+    const std::unique_ptr<char, void (*)(char*)> sql(
+        sqlite3_expanded_sql(statement),
+        [](char* p) { sqlite3_free(static_cast<void*>(p)); }
+    );
+    const sqlite3* db = sqlite3_db_handle(statement);
+    const char* sql_str = sql ? sql.get() : sqlite3_sql(statement);
+
+    if (runtime_ms > slowlog_time.count()) {
+      lsubdout(cct, rgw, 1) << fmt::format(
+                                   "[SQLITE SLOW QUERY] {} {:L}ms {}",
+                                   fmt::ptr(db), runtime_ms, sql_str
+                               )
+                            << dendl;
+    }
+    lsubdout(cct, rgw, 20) << fmt::format(
+                                  "[SQLITE PROFILE] {} {:L}ms {}", fmt::ptr(db),
+                                  runtime_ms, sql_str
+                              )
+                           << dendl;
+    perfcounter_prom_time_hist->hinc(
+        l_rgw_prom_sfs_sqlite_profile, runtime_ns, 1
+    );
+    perfcounter_prom_time_sum->tinc(
+        l_rgw_prom_sfs_sqlite_profile, timespan(runtime_ns)
+    );
+  }
+
+  return 0;
+}
+
+DBConn::DBConn(CephContext* _cct)
+    : storage(_make_storage(getDBPath(_cct))),
+      first_sqlite_conn(nullptr),
+      cct(_cct),
+      profile_enabled(_cct->_conf.get_val<bool>("rgw_sfs_sqlite_profile")) {
+  sqlite3_config(SQLITE_CONFIG_LOG, &sqlite_error_callback, cct);
+  storage.on_open = [this](sqlite3* db) {
+    if (first_sqlite_conn == nullptr) {
+      first_sqlite_conn = db;
+    }
+
+    sqlite3_extended_result_codes(db, 1);
+    sqlite3_busy_timeout(db, 10000);
+    sqlite3_exec(
+        db,
+        fmt::format(
+            "PRAGMA journal_mode=WAL;"
+            "PRAGMA synchronous=normal;"
+            "PRAGMA temp_store = memory;"
+            "PRAGMA case_sensitive_like=ON;"
+            "PRAGMA mmap_size = 30000000000;"
+            "PRAGMA journal_size_limit = {};",
+            cct->_conf.get_val<int64_t>("rgw_sfs_wal_size_limit")
+        )
+            .c_str(),
+        0, 0, 0
+    );
+    if (!cct->_conf.get_val<bool>("rgw_sfs_wal_checkpoint_use_sqlite_default"
+        )) {
+      sqlite3_wal_hook(db, sqlite_wal_hook_callback, this->cct);
+    }
+    if (this->profile_enabled) {
+      sqlite3_trace_v2(
+          db, SQLITE_TRACE_PROFILE, &sqlite_profile_callback, this->cct
+      );
+    }
+  };
+  storage.open_forever();
+  storage.busy_timeout(5000);
+  maybe_upgrade_metadata();
+  check_metadata_is_compatible();
+  storage.sync_schema();
 }
 
 void DBConn::check_metadata_is_compatible() const {
