@@ -333,7 +333,11 @@ rgw::sal::Driver* DriverManager::init_raw_storage_provider(const DoutPrefixProvi
       return nullptr;
     }
   } else if (cfg.store_name.compare("sfs") == 0) {
+#ifdef WITH_RADOSGW_SFS
     driver = newSFStore(cct);
+#else
+    driver = nullptr;
+#endif
   } else if (cfg.store_name.compare("dbstore") == 0) {
 #ifdef WITH_RADOSGW_DBSTORE
     driver = newDBStore(cct);
