@@ -516,16 +516,12 @@ void SFStore::filesystem_stats_updater_main(
 
 std::vector<std::function<MetricsStatusPage::ScalarMetricFunction>>
 SFStore::custom_metric_fns() {
-  sqlite3* sqlite_db = db_conn->first_sqlite_conn;
   auto make_sqlite3_status_fn = [&](const std::string& name, int op,
                                     bool use_highwater = false) {
-    return [sqlite_db, op, use_highwater, name]() {
+    return [op, use_highwater, name]() {
       int current;
       int highwater;
-      int ret = SQLITE_ERROR;
-      if (sqlite_db) {
-        ret = sqlite3_db_status(sqlite_db, op, &current, &highwater, false);
-      }
+      int ret = sqlite3_status(op, &current, &highwater, false);
       if (ret != SQLITE_OK) {
         return std::make_tuple(
             perfcounter_type_d::PERFCOUNTER_U64, name, std::nan("error")
