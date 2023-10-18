@@ -45,3 +45,4 @@ test_versioning_obj_plain_null_version_overwrite_suspended;https://github.com/aq
 test_versioning_obj_plain_null_version_removal;https://github.com/aquarist-labs/s3gw/issues/687;SFS does not support null versions
 test_versioning_obj_suspend_versions;https://github.com/aquarist-labs/s3gw/blob/main/docs/decisions/0010-sfs-versioning.md;Versioning Suspended Buckets ar unsupported and not planned
 test_multipart_copy_special_names;https://github.com/aquarist-labs/s3gw/issues/699;BUG
+test_get_object_torrent;https://github.com/aquarist-labs/s3gw/issues/763;BUG
