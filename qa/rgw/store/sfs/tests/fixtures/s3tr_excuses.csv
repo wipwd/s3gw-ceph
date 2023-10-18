@@ -22,7 +22,6 @@ test_object_lock_delete_object_with_retention_and_marker;https://github.com/aqua
 test_object_read_unreadable;https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-keys.html;Broken test, Object names are UTF-8
 test_object_requestid_matches_header_on_error;https://github.com/aquarist-labs/s3gw/issues/689;BUG
 test_object_set_get_unicode_metadata;https://github.com/aquarist-labs/s3gw/issues/688;BUG, maybe upstream
-test_object_write_with_chunked_transfer_encoding;https://github.com/ceph/ceph/pull/50235;BUG, fixed upstream, remove after rebase
 test_put_object_ifmatch_failed;https://github.com/aquarist-labs/s3gw/issues/674;Unsupported RGW Extension
 test_put_object_ifmatch_nonexisted_failed;https://github.com/aquarist-labs/s3gw/issues/674;Unsupported RGW Extension
 test_put_object_ifnonmatch_failed;https://github.com/aquarist-labs/s3gw/issues/674;Unsupported RGW Extension
