@@ -492,6 +492,14 @@ int SFSObject::set_obj_attrs(
   return 0;
 }
 
+int SFSObject::delete_obj_aio(
+    const DoutPrefixProvider* dpp, RGWObjState* /*astate*/,
+    Completions* /*aio*/, bool /*keep_index_consistent*/, optional_yield /*y*/
+) {
+  ldpp_dout(dpp, 10) << __func__ << ": TODO" << dendl;
+  return -ENOTSUP;
+}
+
 bool SFSObject::get_attr(const std::string& name, bufferlist& dest) {
   return objref->get_attr(name, dest);
 }
@@ -583,6 +591,23 @@ int SFSObject::swift_versioning_copy(
 ) {
   ldpp_dout(dpp, 10) << __func__ << ": do nothing." << dendl;
   return 0;
+}
+
+int SFSObject::omap_get_vals(
+    const DoutPrefixProvider* dpp, const std::string& /*marker*/,
+    uint64_t /*count*/, std::map<std::string, bufferlist>* /*m*/,
+    bool* /*pmore*/, optional_yield /*y*/
+) {
+  ldpp_dout(dpp, 10) << __func__ << ": TODO" << dendl;
+  return -ENOTSUP;
+}
+
+int SFSObject::omap_get_all(
+    const DoutPrefixProvider* dpp, std::map<std::string, bufferlist>* /*m*/,
+    optional_yield /*y*/
+) {
+  ldpp_dout(dpp, 10) << __func__ << ": TODO" << dendl;
+  return -ENOTSUP;
 }
 
 int SFSObject::omap_get_vals_by_keys(
