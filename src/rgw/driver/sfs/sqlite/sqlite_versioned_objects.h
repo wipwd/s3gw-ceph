@@ -80,6 +80,8 @@ class SQLiteVersionedObjects {
       uint max_objects
   ) const;
 
+  int set_all_open_versions_to_deleted() const;
+
  private:
   std::optional<DBVersionedObject>
   get_committed_versioned_object_specific_version(

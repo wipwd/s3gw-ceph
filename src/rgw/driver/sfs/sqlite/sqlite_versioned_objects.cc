@@ -538,4 +538,19 @@ SQLiteVersionedObjects::remove_deleted_versions_transact(uint max_objects
   return retry.run();
 }
 
+int SQLiteVersionedObjects::set_all_open_versions_to_deleted() const {
+  // This function is only for use when we want to deliberately garbage
+  // collect open versions on startup.
+  auto storage = conn->get_storage();
+  auto transaction = storage.transaction_guard();
+  transaction.commit_on_destroy = true;
+  auto now = ceph::real_clock::now();
+  storage.update_all(
+      set(c(&DBVersionedObject::delete_time) = now,
+          c(&DBVersionedObject::object_state) = ObjectState::DELETED),
+      where(is_equal(&DBVersionedObject::object_state, ObjectState::OPEN))
+  );
+  return storage.changes();
+}
+
 }  // namespace rgw::sal::sfs::sqlite

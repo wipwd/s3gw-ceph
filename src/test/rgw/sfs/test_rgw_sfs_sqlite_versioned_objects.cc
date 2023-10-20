@@ -1835,3 +1835,50 @@ TEST_F(TestSFSSQLiteVersionedObjects, TestDeleteMarkerNotAlwaysOnTop) {
   );
   EXPECT_EQ(4, versions[4].id);
 }
+
+TEST_F(TestSFSSQLiteVersionedObjects, TestSetAllOpenVersionsToDeleted) {
+  auto ceph_context = std::make_shared<CephContext>(CEPH_ENTITY_TYPE_CLIENT);
+  ceph_context->_conf.set_val("rgw_sfs_data_path", getTestDir());
+  ceph_context->_log->start();
+
+  EXPECT_FALSE(fs::exists(getDBFullPath()));
+  DBConnRef conn = std::make_shared<DBConn>(ceph_context.get());
+
+  auto db_versioned_objects = std::make_shared<SQLiteVersionedObjects>(conn);
+
+  // Create the object, we need it because of foreign key constrains
+  createObject(
+      TEST_USERNAME, TEST_BUCKET, TEST_OBJECT_ID, ceph_context.get(), conn
+  );
+
+  auto object = createTestVersionedObject(1, TEST_OBJECT_ID, "1");
+  db_versioned_objects->insert_versioned_object(object);
+  object.version_id = "test_version_id_2";
+  object.object_state = rgw::sal::sfs::ObjectState::COMMITTED;
+  db_versioned_objects->insert_versioned_object(object);
+  object.version_id = "test_version_id_3";
+  object.object_state = rgw::sal::sfs::ObjectState::DELETED;
+  db_versioned_objects->insert_versioned_object(object);
+  // We now have three versions, one open, one committed, and one deleted.
+  // Setting all open versions to deleted should only impact one row.
+  EXPECT_EQ(db_versioned_objects->set_all_open_versions_to_deleted(), 1);
+
+  uuid_d uuid;
+  uuid.parse(TEST_OBJECT_ID.c_str());
+  auto versions = db_versioned_objects->get_versioned_objects(uuid, false);
+  ASSERT_EQ(3, versions.size());
+
+  // And now we should have two deleted versions and one committed version
+  int committed = 0;
+  int deleted = 0;
+  for (auto v : versions) {
+    if (v.object_state == rgw::sal::sfs::ObjectState::COMMITTED) {
+      ++committed;
+    }
+    if (v.object_state == rgw::sal::sfs::ObjectState::DELETED) {
+      ++deleted;
+    }
+  }
+  EXPECT_EQ(1, committed);
+  EXPECT_EQ(2, deleted);
+}
