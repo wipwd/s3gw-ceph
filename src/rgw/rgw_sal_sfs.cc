@@ -607,6 +607,10 @@ SFStore::SFStore(CephContext* c, const std::filesystem::path& data_path)
       ) {
   maybe_init_store();
   db_conn = std::make_shared<sfs::sqlite::DBConn>(cctx);
+  sfs::sqlite::SQLiteVersionedObjects objs_versions(db_conn);
+  int num_deleted = objs_versions.set_all_open_versions_to_deleted();
+  ldout(ctx(), 10) << "marked " << num_deleted << " open objects deleted"
+                   << dendl;
   gc = std::make_shared<sfs::SFSGC>(cctx, this);
 
   filesystem_stats_updater = make_named_thread(
