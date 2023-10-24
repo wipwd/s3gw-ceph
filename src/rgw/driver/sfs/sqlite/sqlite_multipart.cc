@@ -112,7 +112,11 @@ int SQLiteMultipart::abort_multiparts_by_bucket_id(const std::string& bucket_id
 int SQLiteMultipart::abort_multiparts(const std::string& bucket_name) const {
   auto storage = conn->get_storage();
   auto bucket_ids_vec = storage.select(
-      &DBBucket::bucket_id, where(is_equal(&DBBucket::bucket_name, bucket_name))
+      &DBBucket::bucket_id,
+      where(
+          is_equal(&DBBucket::bucket_name, bucket_name) and
+          is_equal(&DBBucket::deleted, false)
+      )
   );
   if (bucket_ids_vec.size() == 0) {
     return -ERR_NO_SUCH_BUCKET;
