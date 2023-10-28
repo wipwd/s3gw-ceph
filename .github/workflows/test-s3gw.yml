@@ -8,7 +8,7 @@ on:
 
   push:
     branches:
-      ci/s3tests-results
+      - ci/s3tests-results
     tags:
       - "s3gw-v*"
 
@@ -17,13 +17,53 @@ on:
 
 env:
   CMAKE_BUILD_TYPE: Debug
-  NPROC: 16
+  NPROC: ${{ vars.AWS_EC2_RUNNER_NPROC }}
   # Note: max 128 chars according to OCI Distribution Spec
   IMAGE_TAG: ${{ github.workflow_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+  AWS_EC2_INSTANCE_NAME: s3gw-gh-runner-${{ github.run_id }}-${{ github.run_attempt }}
 
 jobs:
+
+  start-runner:
+    name: Start self-hosted EC2 runner
+    runs-on: ubuntu-latest
+    outputs:
+      label: ${{ steps.start-ec2-runner.outputs.label }}
+      ec2-instance-id: ${{ steps.start-ec2-runner.outputs.ec2-instance-id }}
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_EC2_ACCESS_KEY }}
+          aws-secret-access-key: ${{ secrets.AWS_EC2_SECRET_KEY }}
+          aws-region: ${{ vars.AWS_EC2_REGION }}
+
+      - name: Start EC2 runner
+        id: start-ec2-runner
+        uses: wipwd/ec2-github-runner@next-gen
+        with:
+          mode: start
+          github-token: ${{ secrets.GH_PAT_FOR_EC2 }}
+          ec2-image-id: ${{ vars.AWS_EC2_RUNNER_IMAGE_ID }}
+          ec2-instance-name: ${{ env.AWS_EC2_INSTANCE_NAME }}
+          ec2-instance-type: ${{ vars.AWS_EC2_RUNNER_INSTANCE_TYPE }}
+          ec2-subnet-id: ${{ secrets.AWS_EC2_RUNNER_SUBNET_ID }}
+          ec2-security-group-id: ${{ secrets.AWS_EC2_RUNNER_SECURITY_GROUP_ID }}
+          ec2-key-name: ${{ vars.AWS_EC2_RUNNER_KEY_NAME }}
+          ec2-root-disk-size: ${{ vars.AWS_EC2_RUNNER_DISK_SIZE }}
+          ec2-resource-tags: >
+            [
+              { "Key": "GitHubRepository", "Value": "${{ github.repository }}" },
+              { "Key": "GitHubRefName", "Value": "${{ github.ref_name }}" }
+            ]
+          pre-runner-script: ${{ vars.AWS_EC2_RUNNER_PREPARE_SCRIPT }}
+          runner-name: ${{ env.AWS_EC2_INSTANCE_NAME }}
+
   tests:
-    runs-on: self-hosted
+    name: Run Tests
+    needs: start-runner
+    runs-on: ${{ needs.start-runner.outputs.label }}
 
     steps:
 
@@ -156,3 +196,26 @@ jobs:
             analyze summary \
               /out/s3tr.json \
               /ceph/qa/rgw/store/sfs/tests/fixtures/s3tr_excuses.csv
+
+  stop-runner:
+    name: Stop self-hosted EC2 runner
+    needs:
+      - start-runner
+      - tests
+    runs-on: ubuntu-latest
+    if: ${{ always() }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_EC2_ACCESS_KEY }}
+          aws-secret-access-key: ${{ secrets.AWS_EC2_SECRET_KEY }}
+          aws-region: ${{ vars.AWS_EC2_REGION }}
+
+      - name: Stop EC2 runner
+        uses: wipwd/ec2-github-runner@next-gen
+        with:
+          mode: stop
+          github-token: ${{ secrets.GH_PAT_FOR_EC2 }}
+          label: ${{ needs.start-runner.outputs.label }}
+          ec2-instance-id: ${{ needs.start-runner.outputs.ec2-instance-id }}
